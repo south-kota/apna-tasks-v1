@@ -2,7 +2,7 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { createServer } from "node:http";
+import * as NodeHttp from "node:http";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -53,7 +53,7 @@ const serverLayer = Layer.unwrap(
   Effect.gen(function* () {
     const port = yield* Config.port("PORT").pipe(Config.withDefault(8080));
     yield* Effect.logInfo("vault-cloud listening", { port });
-    return NodeHttpServer.layer(createServer, { port });
+    return NodeHttpServer.layer(NodeHttp.createServer, { port });
   }),
 );
 
