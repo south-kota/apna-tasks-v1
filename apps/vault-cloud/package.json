@@ -1,0 +1,23 @@
+{
+  "name": "@t3tools/vault-cloud",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:bundle": "vp pack",
+    "dev": "node --watch src/main.ts",
+    "start": "node dist/main.mjs",
+    "test": "vp test run",
+    "typecheck": "tsgo --noEmit"
+  },
+  "dependencies": {
+    "@effect/platform-node": "catalog:",
+    "@noble/hashes": "catalog:",
+    "@t3tools/vault-sync": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
