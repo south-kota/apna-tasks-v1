@@ -5,7 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPid } from "@t3tools/shared/hostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
@@ -514,6 +514,9 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       port: input.port,
       devUrl: input.devUrl,
     });
+    // dev-electron.mjs polls this pid (signal 0 only) and shuts Electron down
+    // when the runner tree dies, instead of respawning it as an orphan.
+    env.T3CODE_DEV_SUPERVISOR_PID = String(yield* HostProcessPid);
 
     const selectionSuffix =
       serverOffset !== offset || webOffset !== offset

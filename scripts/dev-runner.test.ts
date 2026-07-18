@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
 import * as NetService from "@t3tools/shared/Net";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessPid, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { assert, describe, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
@@ -527,6 +527,27 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         assert.ok(!error.message.includes(cause.message));
         assert.notProperty(error, "args");
         assert.notInclude(error.message, "secret-token-value");
+      });
+    });
+
+    it.effect("passes the supervisor pid to the spawned process environment", () => {
+      let capturedEnv: Record<string, string | undefined> | undefined;
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make((command) => {
+          capturedEnv = command._tag === "StandardCommand" ? command.options.env : undefined;
+          return Effect.succeed(mockProcess(0));
+        }),
+      );
+
+      return Effect.gen(function* () {
+        yield* runDevRunnerWithInput(devServerInput).pipe(
+          Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
+          Effect.provideService(HostProcessPlatform, "linux"),
+          Effect.provideService(HostProcessPid, 42_424),
+        );
+
+        assert.equal(capturedEnv?.T3CODE_DEV_SUPERVISOR_PID, "42424");
       });
     });
 

@@ -33,6 +33,7 @@ const watchedDirectories = [
 const forcedShutdownTimeoutMs = 1_500;
 const restartDebounceMs = 120;
 const childTreeGracePeriodMs = 1_200;
+const supervisorPollIntervalMs = 2_000;
 const remoteDebuggingPort = process.env.T3CODE_DESKTOP_REMOTE_DEBUGGING_PORT?.trim();
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone dev script has no Effect runtime.
 const hostPlatform = NodeOS.platform();
@@ -198,6 +199,37 @@ function startWatchers() {
   }
 }
 
+function startSupervisorWatch() {
+  const rawPid = process.env.T3CODE_DEV_SUPERVISOR_PID?.trim();
+  if (!rawPid) {
+    return;
+  }
+
+  const supervisorPid = Number.parseInt(rawPid, 10);
+  // Signaling pid <= 1 (or a group via a negative pid) can escape the dev
+  // tree entirely; only ever check a concrete supervisor process.
+  if (!Number.isInteger(supervisorPid) || supervisorPid <= 1) {
+    return;
+  }
+
+  const isSupervisorAlive = () => {
+    try {
+      // Signal 0 is a pure existence check; nothing is delivered.
+      process.kill(supervisorPid, 0);
+      return true;
+    } catch (error) {
+      // EPERM means the process exists but belongs to someone else.
+      return error.code === "EPERM";
+    }
+  };
+
+  setInterval(() => {
+    if (!shuttingDown && !isSupervisorAlive()) {
+      void shutdown(143);
+    }
+  }, supervisorPollIntervalMs).unref();
+}
+
 function killChildTree(signal) {
   if (hostPlatform === "win32") {
     return;
@@ -233,6 +265,7 @@ async function shutdown(exitCode) {
 }
 
 startWatchers();
+startSupervisorWatch();
 cleanupStaleDevApps();
 startApp();
 

@@ -30,4 +30,11 @@ export const HostProcessEnvironment = Context.Reference<NodeJS.ProcessEnv>(
   },
 );
 
+export const HostProcessPid = Context.Reference<number>(
+  "@t3tools/shared/hostProcess/HostProcessPid",
+  {
+    defaultValue: () => process.pid,
+  },
+);
+
 export const isHostWindows = Effect.map(HostProcessPlatform, (platform) => platform === "win32");
