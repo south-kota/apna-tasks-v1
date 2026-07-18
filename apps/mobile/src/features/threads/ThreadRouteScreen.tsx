@@ -33,6 +33,7 @@ import {
 import { useKnownTerminalSessions } from "../../state/use-terminal-session";
 import { useSelectedThreadDetailState } from "../../state/use-thread-detail";
 import { useThreadSelection } from "../../state/use-thread-selection";
+import { useSpeakAgentReplies } from "../../voice/useSpeakAgentReplies";
 import { GitActionProgressOverlay } from "./GitActionProgressOverlay";
 import {
   buildTerminalMenuSessions,
@@ -191,6 +192,14 @@ function ThreadRouteContent(
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const composer = useThreadComposerState();
+  // Speak agent replies for voice-initiated turns (gated by the "Voice
+  // Replies" preference inside the hook).
+  useSpeakAgentReplies({
+    thread: selectedThreadDetail,
+    threadKey: selectedThread
+      ? scopedThreadKey(selectedThread.environmentId, selectedThread.id)
+      : null,
+  });
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();

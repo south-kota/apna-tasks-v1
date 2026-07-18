@@ -274,9 +274,20 @@ const config: ExpoConfig = {
     [
       "expo-camera",
       {
-        cameraPermission: "Allow Apna Tasks to access your camera so you can scan pairing QR codes.",
+        cameraPermission:
+          "Allow Apna Tasks to access your camera so you can scan pairing QR codes.",
         barcodeScannerEnabled: true,
+        // Camera capture stays audio-free; voice dictation gets RECORD_AUDIO
+        // via the expo-speech-recognition config plugin below.
         recordAudioAndroid: false,
+      },
+    ],
+    [
+      "expo-speech-recognition",
+      {
+        microphonePermission: "Allow Apna Tasks to use the microphone so you can dictate messages.",
+        speechRecognitionPermission:
+          "Allow Apna Tasks to use on-device speech recognition to turn your voice into text.",
       },
     ],
     [

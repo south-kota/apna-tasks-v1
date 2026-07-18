@@ -500,6 +500,17 @@ function ConfiguredSettingsRouteScreen() {
             }
             onValueChange={handleLiveActivitiesChange}
           />
+          <SettingsSwitchRow
+            icon="speaker.wave.2"
+            label="Voice Replies"
+            // Speaks the agent's reply out loud after a dictated (mic) message.
+            value={
+              AsyncResult.isSuccess(preferencesResult)
+                ? preferencesResult.value.voiceRepliesEnabled === true
+                : false
+            }
+            onValueChange={(value) => savePreferences({ voiceRepliesEnabled: value })}
+          />
         </SettingsSection>
 
         <SettingsSection title="Appearance">
