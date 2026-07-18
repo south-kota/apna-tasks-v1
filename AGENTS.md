@@ -65,3 +65,12 @@ Everything above is inherited from upstream `pingdotgg/t3code` and still applies
 - Data model: JBOM (`~/Documents/Life/JBOM/spec/`) — markdown + YAML frontmatter is canonical; databases are rebuildable projections.
 - The editor package to embed is `@mark/editor` from `~/Documents/Life/Mark` — do not build a new markdown editor.
 - Setup: `vp install`, then `bun run dev:desktop`. Baseline fork commit: `ebe8afb1d` (upstream main, 2026-07-18).
+
+## Process & System Safety (mandatory for all agents)
+
+Standing constraints from the 2026-07-18 process-kill incident (`~/Documents/Life/Apna Tasks/notes/incident-2026-07-18-process-kill.md`), where a `process.kill(-pid)` finalizer executed by tests with a mock pid of 1 ran `kill(-1, SIGTERM)` and terminated every process on Kota's Mac:
+
+1. **Never launch GUI apps (Electron, the desktop app, browsers) as agent background tasks.** When Kota wants the desktop app, they run `bun run dev:desktop` in their own terminal; Ctrl+C there tears the tree down correctly.
+2. **Never use `pkill`/`killall`/pattern-based kills.** Terminations target exact PIDs from a `ps` inventory Kota has seen in the conversation.
+3. **Never signal negative, computed, or group PIDs without a guard.** Any `process.kill`-style call on a derived value requires `Number.isInteger(pid) && pid > 1` first — in scripts, in app code, and in tests (mock pids must be realistic, never `0`/`1`).
+4. **Describe any process- or system-state-changing action to Kota before running it** (kills, restarts, moving state dirs, config changes).
