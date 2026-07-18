@@ -5,7 +5,12 @@ import {
   normalizeFileCommentRange,
   remapFileCommentAnnotations,
 } from "./fileCommentAnnotations";
-import { isMarkdownPreviewFile, setMarkdownTaskChecked } from "./filePreviewMode";
+import {
+  isMarkdownPreviewFile,
+  resolveMarkdownPreviewMode,
+  setMarkdownTaskChecked,
+  type MarkdownViewSelection,
+} from "./filePreviewMode";
 
 describe("file comment annotations", () => {
   it("normalizes and formats selected line ranges", () => {
@@ -63,6 +68,83 @@ describe("isMarkdownPreviewFile", () => {
   it("does not treat other text files as markdown", () => {
     expect(isMarkdownPreviewFile("docs/guide.txt")).toBe(false);
     expect(isMarkdownPreviewFile("docs/markdown.ts")).toBe(false);
+  });
+});
+
+describe("resolveMarkdownPreviewMode", () => {
+  const noSelection: MarkdownViewSelection = { path: null, mode: "source", revealRequestId: null };
+  const base = {
+    isMarkdown: true,
+    relativePath: "notes/today.md",
+    selection: noSelection,
+    defaultMode: "edit",
+    revealLine: null,
+    revealRequestId: 1,
+  } as const;
+
+  it("applies the sticky default mode to files without an explicit selection", () => {
+    expect(resolveMarkdownPreviewMode(base)).toBe("edit");
+    expect(resolveMarkdownPreviewMode({ ...base, defaultMode: "rendered" })).toBe("rendered");
+    expect(resolveMarkdownPreviewMode({ ...base, defaultMode: "source" })).toBe("source");
+  });
+
+  it("always uses the source surface for non-markdown files", () => {
+    expect(resolveMarkdownPreviewMode({ ...base, isMarkdown: false })).toBe("source");
+    expect(resolveMarkdownPreviewMode({ ...base, relativePath: null })).toBe("source");
+  });
+
+  it("prefers an explicit selection for the current file over the default", () => {
+    const selection: MarkdownViewSelection = {
+      path: "notes/today.md",
+      mode: "rendered",
+      revealRequestId: 1,
+    };
+    expect(resolveMarkdownPreviewMode({ ...base, selection })).toBe("rendered");
+    expect(
+      resolveMarkdownPreviewMode({ ...base, selection: { ...selection, mode: "source" } }),
+    ).toBe("source");
+  });
+
+  it("ignores selections made for a different file", () => {
+    const selection: MarkdownViewSelection = {
+      path: "notes/other.md",
+      mode: "rendered",
+      revealRequestId: 1,
+    };
+    expect(resolveMarkdownPreviewMode({ ...base, selection })).toBe("edit");
+  });
+
+  it("falls back to source while a line reveal is pending", () => {
+    expect(resolveMarkdownPreviewMode({ ...base, revealLine: 12 })).toBe("source");
+    const staleSelection: MarkdownViewSelection = {
+      path: "notes/today.md",
+      mode: "edit",
+      revealRequestId: 1,
+    };
+    expect(
+      resolveMarkdownPreviewMode({
+        ...base,
+        selection: staleSelection,
+        revealLine: 12,
+        revealRequestId: 2,
+      }),
+    ).toBe("source");
+  });
+
+  it("keeps a mode re-picked after the reveal fired", () => {
+    const repicked: MarkdownViewSelection = {
+      path: "notes/today.md",
+      mode: "edit",
+      revealRequestId: 2,
+    };
+    expect(
+      resolveMarkdownPreviewMode({
+        ...base,
+        selection: repicked,
+        revealLine: 12,
+        revealRequestId: 2,
+      }),
+    ).toBe("edit");
   });
 });
 

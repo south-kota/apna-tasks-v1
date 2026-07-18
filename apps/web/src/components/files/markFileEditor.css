@@ -1,0 +1,38 @@
+/*
+ * Theme bridge for the embedded Mark editor (@mark/editor).
+ *
+ * @atomic-editor/editor themes exclusively through `--atomic-editor-*`
+ * custom properties (all of its selectors are scoped under
+ * `.atomic-cm-editor` / `.cm-atomic-*`, so it does not fight Tailwind).
+ * Scoping the overrides under `.mark-file-editor` keeps the mapping from
+ * leaking into any future Mark-based surface with different needs.
+ */
+.mark-file-editor {
+  --atomic-editor-bg: var(--background);
+  --atomic-editor-bg-panel: var(--popover);
+  --atomic-editor-bg-surface: var(--card);
+  --atomic-editor-fg: var(--foreground);
+  --atomic-editor-fg-muted: var(--muted-foreground);
+  --atomic-editor-fg-faint: color-mix(in srgb, var(--muted-foreground) 65%, transparent);
+  --atomic-editor-border: var(--border);
+  --atomic-editor-accent: var(--primary);
+  --atomic-editor-accent-bright: var(--primary);
+  --atomic-editor-accent-soft: color-mix(in srgb, var(--primary) 40%, var(--background));
+  --atomic-editor-link: var(--primary);
+  --atomic-editor-link-hover: color-mix(in srgb, var(--primary) 80%, var(--foreground));
+  --atomic-editor-code-bg: var(--muted);
+  --atomic-editor-selection-bg: color-mix(in srgb, var(--primary) 22%, transparent);
+  --atomic-editor-font: inherit;
+  --atomic-editor-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --atomic-editor-body-size: 0.9375rem;
+  --atomic-editor-body-leading: 1.7;
+  --atomic-editor-measure: 72ch;
+
+  background: var(--background);
+}
+
+/* Let the CodeMirror scroller own scrolling inside the flexed panel. */
+.mark-file-editor .atomic-cm-editor,
+.mark-file-editor .cm-editor {
+  height: 100%;
+}
