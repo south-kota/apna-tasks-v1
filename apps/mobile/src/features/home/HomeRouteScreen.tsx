@@ -88,7 +88,7 @@ export function HomeRouteScreen() {
       <>
         {/* Restore the compact title in case the split branch blanked it. */}
         <NativeStackScreenOptions
-          options={{ title: "T3 Code", headerTitle: renderCompactBrandTitle }}
+          options={{ title: "Apna Tasks", headerTitle: renderCompactBrandTitle }}
         />
         <HomeHeader
           environments={environments}

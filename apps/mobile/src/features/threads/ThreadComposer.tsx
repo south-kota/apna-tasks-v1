@@ -62,6 +62,8 @@ import {
   resolveProviderOptionDescriptors,
 } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
+import { useVoiceDictation } from "../../voice/useVoiceDictation";
+import { markVoiceInitiatedSend } from "../../voice/voiceTurnRegistry";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
 
 /**
@@ -503,15 +505,30 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   // ── Handle command selection ──────────────────────────────
   const { onChangeDraftMessage, onUpdateInteractionMode, draftMessage, onSendMessage } = props;
 
+  // ── Voice dictation (push-to-talk) ───────────────────────
+  const voiceDictation = useVoiceDictation({
+    draftText: draftMessage,
+    onChangeDraftText: onChangeDraftMessage,
+  });
+  const isDictating = voiceDictation.isDictating;
+  const { abort: abortDictation, consumeDictationContribution } = voiceDictation;
+
   const handleSend = useCallback(async () => {
     const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
     if (inFlightThreadIdsRef.current.has(threadKey)) return;
     inFlightThreadIdsRef.current.add(threadKey);
+    // Sending mid-dictation ends the session; the partial transcript already
+    // in the draft is what gets sent.
+    abortDictation();
+    if (consumeDictationContribution()) {
+      // Remember that this turn was spoken so the reply can be spoken back.
+      markVoiceInitiatedSend(threadKey);
+    }
     // Sending a prompt starts agent work: arm the lock-screen card now, while
     // the app is foregrounded and the activity token can be registered.
     armAgentAwarenessLiveActivityForLocalWork({
       threadTitle: props.selectedThread.title,
-      projectTitle: props.environmentLabel ?? "T3 Code",
+      projectTitle: props.environmentLabel ?? "Apna Tasks",
     });
     try {
       await onSendMessage();
@@ -519,6 +536,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       inFlightThreadIdsRef.current.delete(threadKey);
     }
   }, [
+    abortDictation,
+    consumeDictationContribution,
     onSendMessage,
     props.environmentId,
     props.environmentLabel,
@@ -822,7 +841,19 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             </View>
           ) : null}
           {!isExpanded ? (
-            <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(100)}>
+            <Animated.View
+              className="flex-row items-center gap-1"
+              entering={FadeIn.duration(180)}
+              exiting={FadeOut.duration(100)}
+            >
+              <ControlPill
+                accessibilityLabel={isDictating ? "Stop dictation" : "Dictate"}
+                icon={isDictating ? "waveform" : "mic"}
+                variant={isDictating ? "danger" : "circle"}
+                onPress={voiceDictation.toggle}
+                onLongPress={voiceDictation.onLongPress}
+                onPressOut={voiceDictation.onPressOut}
+              />
               {showStopAction ? (
                 <ControlPill icon="stop.fill" variant="danger" onPress={props.onStopThread} />
               ) : (
@@ -849,6 +880,15 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   accessibilityLabel="Add attachment"
                   icon="plus"
                   onPress={() => void props.onPickDraftImages()}
+                  showChevron={false}
+                />
+                <ComposerToolbarButton
+                  accessibilityLabel={isDictating ? "Stop dictation" : "Dictate"}
+                  icon={isDictating ? "waveform" : "mic"}
+                  variant={isDictating ? "danger" : "default"}
+                  onPress={voiceDictation.toggle}
+                  onLongPress={voiceDictation.onLongPress}
+                  onPressOut={voiceDictation.onPressOut}
                   showChevron={false}
                 />
                 <ControlPillMenu

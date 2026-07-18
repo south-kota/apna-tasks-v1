@@ -21,6 +21,8 @@ export function ControlPill(props: {
   readonly label?: string;
   readonly accessibilityLabel?: string;
   readonly onPress?: () => void;
+  readonly onLongPress?: () => void;
+  readonly onPressOut?: () => void;
   readonly variant?: "circle" | "pill" | "primary" | "danger";
   readonly disabled?: boolean;
 }) {
@@ -69,6 +71,8 @@ export function ControlPill(props: {
       accessibilityLabel={props.accessibilityLabel ?? props.label}
       accessibilityRole="button"
       onPress={props.onPress}
+      onLongPress={props.onLongPress}
+      onPressOut={props.onPressOut}
       disabled={props.disabled}
       className={containerClassName}
     >

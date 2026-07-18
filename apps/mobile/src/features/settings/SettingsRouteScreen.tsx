@@ -455,7 +455,7 @@ function ConfiguredSettingsRouteScreen() {
             />
           </SettingsSection>
           <Text className="px-2 text-sm text-foreground-muted">
-            T3 Code works locally without signing in. Cloud features are optional.
+            Apna Tasks works locally without signing in. Cloud features are optional.
           </Text>
         </View>
 
@@ -499,6 +499,17 @@ function ConfiguredSettingsRouteScreen() {
               deviceRegistered
             }
             onValueChange={handleLiveActivitiesChange}
+          />
+          <SettingsSwitchRow
+            icon="speaker.wave.2"
+            label="Voice Replies"
+            // Speaks the agent's reply out loud after a dictated (mic) message.
+            value={
+              AsyncResult.isSuccess(preferencesResult)
+                ? preferencesResult.value.voiceRepliesEnabled === true
+                : false
+            }
+            onValueChange={(value) => savePreferences({ voiceRepliesEnabled: value })}
           />
         </SettingsSection>
 

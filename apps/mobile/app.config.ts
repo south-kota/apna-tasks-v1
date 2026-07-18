@@ -61,26 +61,26 @@ const RELEASE_ASSETS = {
 
 const VARIANT_CONFIG = {
   development: {
-    appName: "T3 Code Dev",
-    scheme: "t3code-dev",
-    iosBundleIdentifier: "com.t3tools.t3code.dev",
-    androidPackage: "com.t3tools.t3code.dev",
+    appName: "Apna Tasks Dev",
+    scheme: "apnatasks-dev",
+    iosBundleIdentifier: "com.apnatasks.mobile.dev",
+    androidPackage: "com.apnatasks.mobile.dev",
     relyingParty: "clerk.t3.codes",
     assets: DEVELOPMENT_ASSETS,
   },
   preview: {
-    appName: "T3 Code Preview",
-    scheme: "t3code-preview",
-    iosBundleIdentifier: "com.t3tools.t3code.preview",
-    androidPackage: "com.t3tools.t3code.preview",
+    appName: "Apna Tasks Preview",
+    scheme: "apnatasks-preview",
+    iosBundleIdentifier: "com.apnatasks.mobile.preview",
+    androidPackage: "com.apnatasks.mobile.preview",
     relyingParty: "clerk.t3.codes",
     assets: PREVIEW_ASSETS,
   },
   production: {
-    appName: "T3 Code",
-    scheme: "t3code",
-    iosBundleIdentifier: "com.t3tools.t3code",
-    androidPackage: "com.t3tools.t3code",
+    appName: "Apna Tasks",
+    scheme: "apnatasks",
+    iosBundleIdentifier: "com.apnatasks.mobile",
+    androidPackage: "com.apnatasks.mobile",
     relyingParty: "clerk.t3.codes",
     assets: RELEASE_ASSETS,
   },
@@ -121,7 +121,7 @@ const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
       {
         name: "AgentActivity",
         displayName: "Agent Activity",
-        description: "Shows the current state of active T3 Code agents.",
+        description: "Shows the current state of active Apna Tasks agents.",
         supportedFamilies: ["systemSmall", "systemMedium", "accessoryRectangular"],
       },
     ],
@@ -195,7 +195,7 @@ const config: ExpoConfig = {
         NSAllowsArbitraryLoads: true,
       },
       NSLocalNetworkUsageDescription:
-        "Allow T3 Code to connect to T3 Code servers on your local network or tailnet.",
+        "Allow Apna Tasks to connect to Apna Tasks servers on your local network or tailnet.",
       ITSAppUsesNonExemptEncryption: false,
     },
   },
@@ -274,9 +274,20 @@ const config: ExpoConfig = {
     [
       "expo-camera",
       {
-        cameraPermission: "Allow T3 Code to access your camera so you can scan pairing QR codes.",
+        cameraPermission:
+          "Allow Apna Tasks to access your camera so you can scan pairing QR codes.",
         barcodeScannerEnabled: true,
+        // Camera capture stays audio-free; voice dictation gets RECORD_AUDIO
+        // via the expo-speech-recognition config plugin below.
         recordAudioAndroid: false,
+      },
+    ],
+    [
+      "expo-speech-recognition",
+      {
+        microphonePermission: "Allow Apna Tasks to use the microphone so you can dictate messages.",
+        speechRecognitionPermission:
+          "Allow Apna Tasks to use on-device speech recognition to turn your voice into text.",
       },
     ],
     [
