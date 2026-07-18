@@ -1,0 +1,66 @@
+{
+  "name": "@t3tools/jbom",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./Frontmatter": {
+      "types": "./src/Frontmatter.ts",
+      "import": "./src/Frontmatter.ts"
+    },
+    "./Markdown": {
+      "types": "./src/Markdown.ts",
+      "import": "./src/Markdown.ts"
+    },
+    "./Model": {
+      "types": "./src/Model.ts",
+      "import": "./src/Model.ts"
+    },
+    "./Config": {
+      "types": "./src/Config.ts",
+      "import": "./src/Config.ts"
+    },
+    "./Validate": {
+      "types": "./src/Validate.ts",
+      "import": "./src/Validate.ts"
+    },
+    "./FileOps": {
+      "types": "./src/FileOps.ts",
+      "import": "./src/FileOps.ts"
+    },
+    "./Scan": {
+      "types": "./src/Scan.ts",
+      "import": "./src/Scan.ts"
+    },
+    "./Watcher": {
+      "types": "./src/Watcher.ts",
+      "import": "./src/Watcher.ts"
+    },
+    "./Index": {
+      "types": "./src/Index.ts",
+      "import": "./src/Index.ts"
+    },
+    "./Export": {
+      "types": "./src/Export.ts",
+      "import": "./src/Export.ts"
+    },
+    "./Engine": {
+      "types": "./src/Engine.ts",
+      "import": "./src/Engine.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit",
+    "test": "vp test run",
+    "cli": "node src/cli.ts"
+  },
+  "dependencies": {
+    "effect": "catalog:",
+    "yaml": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
