@@ -11,7 +11,15 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { ChevronRight, Code2, Eye, FolderTree, Globe2, LoaderCircle } from "lucide-react";
+import {
+  ChevronRight,
+  Code2,
+  Eye,
+  FolderTree,
+  Globe2,
+  LoaderCircle,
+  SquarePen,
+} from "lucide-react";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -34,7 +42,6 @@ import { buildFileReviewComment } from "~/reviewCommentContext";
 import { assetEnvironment } from "~/state/assets";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
-import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
@@ -52,14 +59,21 @@ import { installFileEditorDismissal } from "./fileEditorDismissal";
 import { LocalCommentAnnotation } from "./LocalCommentAnnotation";
 import { projectFileCacheKey } from "./fileContentRevision";
 import { fileBreadcrumbs } from "./filePath";
-import { isMarkdownPreviewFile, setMarkdownTaskChecked } from "./filePreviewMode";
-import { FileSaveCoordinator } from "./fileSaveCoordinator";
 import {
-  confirmProjectFileQueryData,
+  isMarkdownPreviewFile,
+  MARKDOWN_PREVIEW_MODES,
+  resolveMarkdownPreviewMode,
+  setMarkdownTaskChecked,
+  type MarkdownPreviewMode,
+  type MarkdownViewSelection,
+} from "./filePreviewMode";
+import MarkFileEditorSurface from "./MarkFileEditorSurface";
+import {
   getOptimisticProjectFileQueryData,
   setProjectFileQueryData,
   useProjectFileQuery,
 } from "./projectFilesQueryState";
+import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
 
 interface FilePreviewPanelProps {
   environmentId: EnvironmentId;
@@ -77,7 +91,8 @@ interface FilePreviewPanelProps {
 }
 
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
-const FILE_SAVE_DEBOUNCE_MS = 500;
+const MARKDOWN_PREVIEW_MODE_STORAGE_KEY = "apnatasks.markdownPreviewMode";
+const MarkdownPreviewModeSchema = Schema.Literals(MARKDOWN_PREVIEW_MODES);
 const FILE_LINK_REVEAL_ATTRIBUTE = "data-file-link-reveal";
 const FILE_LINK_REVEAL_UNSAFE_CSS = `
   [${FILE_LINK_REVEAL_ATTRIBUTE}][data-line] {
@@ -257,37 +272,6 @@ interface EditableFileSurfaceProps {
 interface FileSelectionOverride {
   revealRequestId: number;
   range: SelectedLineRange | null;
-}
-
-function useFileSaveCoordinator({
-  environmentId,
-  cwd,
-  relativePath,
-  onPendingChange,
-}: Pick<
-  EditableFileSurfaceProps,
-  "environmentId" | "cwd" | "relativePath" | "onPendingChange"
->): FileSaveCoordinator {
-  const writeFile = useAtomCommand(projectEnvironment.writeFile);
-  const coordinator = useMemo(
-    () =>
-      new FileSaveCoordinator({
-        debounceMs: FILE_SAVE_DEBOUNCE_MS,
-        onPendingChange: (pending) => onPendingChange(relativePath, pending),
-        persist: (nextContents) =>
-          writeFile({
-            environmentId,
-            input: { cwd, relativePath, contents: nextContents },
-          }),
-        onConfirmed: (confirmedContents) => {
-          confirmProjectFileQueryData(environmentId, cwd, relativePath, confirmedContents);
-        },
-      }),
-    [cwd, environmentId, onPendingChange, relativePath, writeFile],
-  );
-
-  useEffect(() => () => coordinator.dispose(), [coordinator]);
-  return coordinator;
 }
 
 function EditableFileSurface({
@@ -606,6 +590,17 @@ function initialExplorerOpen(): boolean {
   }
 }
 
+function initialDefaultMarkdownMode(): MarkdownPreviewMode {
+  try {
+    return (
+      getLocalStorageItem(MARKDOWN_PREVIEW_MODE_STORAGE_KEY, MarkdownPreviewModeSchema) ?? "edit"
+    );
+  } catch (error) {
+    console.error(error);
+    return "edit";
+  }
+}
+
 export default function FilePreviewPanel({
   environmentId,
   cwd,
@@ -632,16 +627,36 @@ export default function FilePreviewPanel({
   });
   const file = useProjectFileQuery(environmentId, cwd, relativePath);
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
-  const [markdownView, setMarkdownView] = useState<{
-    path: string | null;
-    revealRequestId: number | null;
-  }>({ path: null, revealRequestId: null });
+  const [markdownView, setMarkdownView] = useState<MarkdownViewSelection>({
+    path: null,
+    mode: "source",
+    revealRequestId: null,
+  });
+  const [defaultMarkdownMode, setDefaultMarkdownMode] = useState(initialDefaultMarkdownMode);
   const breadcrumbRef = useRef<HTMLDivElement>(null);
   const isMarkdown = relativePath ? isMarkdownPreviewFile(relativePath) : false;
-  const renderMarkdown =
-    isMarkdown &&
-    markdownView.path === relativePath &&
-    (revealLine === null || markdownView.revealRequestId === revealRequestId);
+  const markdownMode = resolveMarkdownPreviewMode({
+    isMarkdown,
+    relativePath,
+    selection: markdownView,
+    defaultMode: defaultMarkdownMode,
+    revealLine,
+    revealRequestId,
+  });
+  const renderMarkdown = markdownMode === "rendered";
+  const editMarkdown = markdownMode === "edit";
+  const selectMarkdownMode = useCallback(
+    (mode: MarkdownPreviewMode) => {
+      setMarkdownView({ path: relativePath, mode, revealRequestId });
+      setDefaultMarkdownMode(mode);
+      try {
+        setLocalStorageItem(MARKDOWN_PREVIEW_MODE_STORAGE_KEY, mode, MarkdownPreviewModeSchema);
+      } catch (error) {
+        console.error(error);
+      }
+    },
+    [relativePath, revealRequestId],
+  );
   const canOpenInBrowser =
     relativePath !== null && isPreviewSupportedInRuntime() && isBrowserPreviewFile(relativePath);
   const absolutePath = relativePath ? resolvePathLinkTarget(relativePath, cwd) : null;
@@ -746,12 +761,36 @@ export default function FilePreviewPanel({
                 render={
                   <Toggle
                     className="shrink-0"
+                    pressed={editMarkdown}
+                    onPressedChange={(pressed) => {
+                      selectMarkdownMode(pressed ? "edit" : "source");
+                    }}
+                    aria-label={editMarkdown ? "Show markdown source" : "Edit with Mark"}
+                    variant="ghost"
+                    size="sm"
+                  >
+                    {editMarkdown ? (
+                      <Code2 className="size-3.5" />
+                    ) : (
+                      <SquarePen className="size-3.5" />
+                    )}
+                  </Toggle>
+                }
+              />
+              <TooltipPopup>
+                {editMarkdown ? "Show markdown source" : "Edit with Mark (live preview)"}
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
+          {isMarkdown ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Toggle
+                    className="shrink-0"
                     pressed={renderMarkdown}
                     onPressedChange={(pressed) => {
-                      setMarkdownView({
-                        path: pressed ? relativePath : null,
-                        revealRequestId: pressed ? revealRequestId : null,
-                      });
+                      selectMarkdownMode(pressed ? "rendered" : "source");
                     }}
                     aria-label={renderMarkdown ? "Show markdown source" : "Show rendered markdown"}
                     variant="ghost"
@@ -833,6 +872,15 @@ export default function FilePreviewPanel({
                 cwd={cwd}
                 relativePath={relativePath}
                 threadRef={threadRef}
+                contents={file.data.contents}
+                onPendingChange={onPendingChange}
+              />
+            ) : isMarkdown && editMarkdown && !file.data.truncated ? (
+              <MarkFileEditorSurface
+                key={relativePath}
+                environmentId={environmentId}
+                cwd={cwd}
+                relativePath={relativePath}
                 contents={file.data.contents}
                 onPendingChange={onPendingChange}
               />

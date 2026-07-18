@@ -24,6 +24,7 @@
     "@formkit/auto-animate": "^0.9.0",
     "@legendapp/list": "3.2.0",
     "@lexical/react": "^0.41.0",
+    "@mark/editor": "file:/Users/kota/Documents/Life/Mark/packages/editor/dist",
     "@pierre/diffs": "catalog:",
     "@pierre/trees": "1.0.0-beta.4",
     "@t3tools/client-runtime": "workspace:*",
