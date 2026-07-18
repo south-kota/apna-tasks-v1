@@ -455,7 +455,7 @@ function ConfiguredSettingsRouteScreen() {
             />
           </SettingsSection>
           <Text className="px-2 text-sm text-foreground-muted">
-            T3 Code works locally without signing in. Cloud features are optional.
+            Apna Tasks works locally without signing in. Cloud features are optional.
           </Text>
         </View>
 

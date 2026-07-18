@@ -1,7 +1,6 @@
 import { View } from "react-native";
 
 import { AppText as Text } from "./AppText";
-import { T3Wordmark } from "./T3Wordmark";
 import { useThemeColor } from "../lib/useThemeColor";
 
 /**
@@ -15,12 +14,21 @@ export function CompactBrandTitle() {
   return (
     <View
       aria-level={1}
-      accessibilityLabel="T3 Code"
+      accessibilityLabel="Apna Tasks"
       accessible
       role="heading"
       style={{ alignItems: "center", flexDirection: "row", gap: 6 }}
     >
-      <T3Wordmark color={iconColor} height={11} />
+      <Text
+        style={{
+          color: iconColor,
+          fontFamily: "DMSans-Bold",
+          fontSize: 14,
+          letterSpacing: -0.35,
+        }}
+      >
+        Apna
+      </Text>
       <Text
         style={{
           color: mutedColor,
@@ -29,7 +37,7 @@ export function CompactBrandTitle() {
           letterSpacing: -0.35,
         }}
       >
-        Code
+        Tasks
       </Text>
       <View
         style={{

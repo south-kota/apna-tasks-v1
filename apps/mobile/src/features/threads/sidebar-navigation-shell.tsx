@@ -39,7 +39,7 @@ const SIDEBAR_SCREEN_OPTIONS: SidebarScreenOptions = {
   headerTitleStyle: { fontSize: 18, fontWeight: "800" },
   headerTransparent: true,
   scrollEdgeEffects: SCROLL_EDGE_EFFECTS,
-  title: "T3 Code",
+  title: "Apna Tasks",
   unstable_navigationItemStyle: "editor",
 };
 
