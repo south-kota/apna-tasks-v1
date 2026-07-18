@@ -1,0 +1,46 @@
+{
+  "name": "@t3tools/vault-sync",
+  "private": true,
+  "bin": {
+    "vault-sync": "./src/cli.ts"
+  },
+  "type": "module",
+  "exports": {
+    "./client": {
+      "types": "./src/client.ts",
+      "import": "./src/client.ts"
+    },
+    "./manifest": {
+      "types": "./src/manifest.ts",
+      "import": "./src/manifest.ts"
+    },
+    "./sync": {
+      "types": "./src/sync.ts",
+      "import": "./src/sync.ts"
+    },
+    "./syncState": {
+      "types": "./src/syncState.ts",
+      "import": "./src/syncState.ts"
+    },
+    "./vault": {
+      "types": "./src/vault.ts",
+      "import": "./src/vault.ts"
+    }
+  },
+  "scripts": {
+    "sync": "node src/cli.ts",
+    "test": "vp test run",
+    "typecheck": "tsgo --noEmit"
+  },
+  "dependencies": {
+    "@noble/hashes": "catalog:",
+    "@t3tools/shared": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
