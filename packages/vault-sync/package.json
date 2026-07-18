@@ -25,6 +25,10 @@
     "./vault": {
       "types": "./src/vault.ts",
       "import": "./src/vault.ts"
+    },
+    "./watch": {
+      "types": "./src/watch.ts",
+      "import": "./src/watch.ts"
     }
   },
   "scripts": {

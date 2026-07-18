@@ -3,17 +3,21 @@
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeProcess from "node:process";
+import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 
 import { makeVaultCloudClient } from "./client.ts";
 import { pullVault, pushVault, statusVault } from "./sync.ts";
+import { runVaultWatch } from "./watch.ts";
 
 export class SyncCliUsageError extends Schema.TaggedErrorClass<SyncCliUsageError>()(
   "SyncCliUsageError",
@@ -21,7 +25,7 @@ export class SyncCliUsageError extends Schema.TaggedErrorClass<SyncCliUsageError
 ) {
   override get message(): string {
     return [
-      "Usage: vault-sync <push|pull|status> <vault-directory> --vault-id <id> [--force] [--no-prune]",
+      "Usage: vault-sync <push|pull|status|watch> <vault-directory> --vault-id <id> [--force] [--no-prune]",
       "Environment: APNA_VAULT_URL, APNA_VAULT_TOKEN",
     ].join("\n");
   }
@@ -47,7 +51,7 @@ const main = Effect.gen(function* () {
   const root = args[1];
   const vaultId = valueAfter(args, "--vault-id");
   if (
-    (command !== "push" && command !== "pull" && command !== "status") ||
+    (command !== "push" && command !== "pull" && command !== "status" && command !== "watch") ||
     root === undefined ||
     vaultId === undefined
   ) {
@@ -59,8 +63,26 @@ const main = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const client = makeVaultCloudClient({ baseUrl, token, httpClient });
   const crypto = yield* Crypto.Crypto;
-  const revision = yield* crypto.randomUUIDv7;
-  const generatedAt = DateTime.formatIso(yield* DateTime.now);
+  const makeVersion = Effect.fn("makeSyncVersion")(function* () {
+    const revision = yield* crypto.randomUUIDv7;
+    const generatedAt = DateTime.formatIso(yield* DateTime.now);
+    return { revision, generatedAt };
+  });
+
+  if (command === "watch") {
+    yield* runVaultWatch(root, {
+      push: () =>
+        Effect.gen(function* () {
+          const version = yield* makeVersion();
+          const result = yield* pushVault({ root, vaultId, client, ...version });
+          return { revision: result.manifest.revision };
+        }),
+      pull: () => pullVault({ root, vaultId, client }).pipe(Effect.asVoid),
+    });
+    return;
+  }
+
+  const { revision, generatedAt } = yield* makeVersion();
 
   if (command === "push") {
     const result = yield* pushVault({
@@ -110,5 +132,13 @@ const main = Effect.gen(function* () {
 });
 
 if (import.meta.main) {
-  main.pipe(Effect.provide([NodeServices.layer, FetchHttpClient.layer]), NodeRuntime.runMain);
+  main.pipe(
+    Effect.provide([NodeServices.layer, FetchHttpClient.layer]),
+    NodeRuntime.runMain({
+      teardown: (exit, onExit) => {
+        if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) return onExit(0);
+        Runtime.defaultTeardown(exit, onExit);
+      },
+    }),
+  );
 }

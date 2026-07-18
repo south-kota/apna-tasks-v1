@@ -28,6 +28,15 @@ const excludedDirectoryNames = new Set([
   "node_modules",
 ]);
 
+/** Whether a vault-relative path is inside a directory excluded from snapshots. */
+export function isIgnoredVaultPath(input: string): boolean {
+  const normalized = normalizeVaultPath(input);
+  return (
+    normalized === null ||
+    normalized.split("/").some((segment) => excludedDirectoryNames.has(segment))
+  );
+}
+
 export interface ScanVaultOptions {
   readonly vaultId: string;
   readonly revision: string;
