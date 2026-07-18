@@ -55,3 +55,13 @@ agents.
   examples of idiomatic usage, tests, module structure, and API design.
 - When writing relay infrastructure code with Alchemy, inspect `.repos/alchemy-effect/` for examples of
   idiomatic usage, tests, module structure, and API design.
+
+## Apna Tasks (this fork)
+
+Everything above is inherited from upstream `pingdotgg/t3code` and still applies. This repository is **Apna Tasks**, Kota's fork: a local-first, markdown-native productivity and agent workbench. App identity: display name "Apna Tasks", bundle id `com.apnatasks.desktop`, url scheme `apnatasks://`, home dir `~/.apnatasks`.
+
+- Remotes: `origin` = south-kota/apna-tasks; `upstream` = pingdotgg/t3code (fetch-only, push disabled). Keep diffs small and additive so upstream stays mergeable — prefer new packages/files over editing upstream code.
+- Plan, workstream briefs, and agent-task conventions live in `~/Documents/Life/Apna Tasks/` (start with `PLAN.md`). Workstream working notes go in `~/Documents/Life/Apna Tasks/notes/` as markdown.
+- Data model: JBOM (`~/Documents/Life/JBOM/spec/`) — markdown + YAML frontmatter is canonical; databases are rebuildable projections.
+- The editor package to embed is `@mark/editor` from `~/Documents/Life/Mark` — do not build a new markdown editor.
+- Setup: `vp install`, then `bun run dev:desktop`. Baseline fork commit: `ebe8afb1d` (upstream main, 2026-07-18).

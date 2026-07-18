@@ -144,7 +144,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
-        assert.equal(env.T3CODE_HOME, path.resolve(NodeOS.homedir(), ".t3"));
+        assert.equal(env.T3CODE_HOME, path.resolve(NodeOS.homedir(), ".apnatasks"));
       }),
     );
 
