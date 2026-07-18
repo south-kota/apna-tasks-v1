@@ -244,22 +244,22 @@ it("selects a reachable LAN IPv4 address", () => {
 });
 
 it("maps capture scenes to the real application routes", () => {
-  assert.equal(showcaseSceneUrl("threads", "environment-1"), "t3code-dev://");
+  assert.equal(showcaseSceneUrl("threads", "environment-1"), "apnatasks-dev://");
   assert.equal(
     showcaseSceneUrl("environments", "environment-1"),
-    "t3code-dev://settings/environments",
+    "apnatasks-dev://settings/environments",
   );
   assert.equal(
     showcaseSceneUrl("thread", "environment-1"),
-    "t3code-dev://threads/environment-1/remote-command-center",
+    "apnatasks-dev://threads/environment-1/remote-command-center",
   );
   assert.equal(
     showcaseSceneUrl("terminal", "environment-1"),
-    "t3code-dev://threads/environment-1/remote-command-center/terminal?terminalId=term-1",
+    "apnatasks-dev://threads/environment-1/remote-command-center/terminal?terminalId=term-1",
   );
   assert.equal(
     showcaseSceneUrl("review", "environment-1"),
-    "t3code-dev://threads/environment-1/remote-command-center/review",
+    "apnatasks-dev://threads/environment-1/remote-command-center/review",
   );
 });
 
