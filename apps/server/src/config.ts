@@ -12,6 +12,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as LogLevel from "effect/LogLevel";
 import * as Path from "effect/Path";
+import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 export const DEFAULT_PORT = 3773;
@@ -21,6 +22,13 @@ export type RuntimeMode = typeof RuntimeMode.Type;
 
 export const StartupPresentation = Schema.Literals(["browser", "headless"]);
 export type StartupPresentation = typeof StartupPresentation.Type;
+
+export interface VaultReplicaConfig {
+  readonly root: string;
+  readonly vaultId: string;
+  readonly baseUrl: string;
+  readonly token: Redacted.Redacted<string>;
+}
 
 /**
  * ServerDerivedPaths - Derived paths from the base directory.
@@ -75,6 +83,7 @@ export class ServerConfig extends Context.Service<
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
+    readonly vaultReplica?: VaultReplicaConfig;
   }
 >()("t3/config/ServerConfig") {
   /** @deprecated Import and use `layerTest` from this module. */

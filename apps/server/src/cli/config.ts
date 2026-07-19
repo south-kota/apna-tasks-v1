@@ -8,6 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as LogLevel from "effect/LogLevel";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
@@ -128,6 +129,63 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  vaultRoot: Config.string("APNA_VAULT_ROOT").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  vaultId: Config.string("APNA_VAULT_ID").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  vaultUrl: Config.string("APNA_VAULT_URL").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  vaultToken: Config.redacted("APNA_VAULT_TOKEN").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+});
+
+const VAULT_REPLICA_ENV_NAMES = [
+  "APNA_VAULT_ROOT",
+  "APNA_VAULT_ID",
+  "APNA_VAULT_URL",
+  "APNA_VAULT_TOKEN",
+] as const;
+
+export class VaultReplicaConfigError extends Schema.TaggedErrorClass<VaultReplicaConfigError>()(
+  "VaultReplicaConfigError",
+  { missing: Schema.Array(Schema.String) },
+) {
+  override get message(): string {
+    return `Vault replica configuration is incomplete. Set all of ${VAULT_REPLICA_ENV_NAMES.join(
+      ", ",
+    )}; missing: ${this.missing.join(", ")}.`;
+  }
+}
+
+const resolveVaultReplicaConfig = Effect.fn("resolveVaultReplicaConfig")(function* (env: {
+  readonly vaultRoot: string | undefined;
+  readonly vaultId: string | undefined;
+  readonly vaultUrl: string | undefined;
+  readonly vaultToken: Redacted.Redacted<string> | undefined;
+}) {
+  const values = {
+    APNA_VAULT_ROOT: env.vaultRoot?.trim(),
+    APNA_VAULT_ID: env.vaultId?.trim(),
+    APNA_VAULT_URL: env.vaultUrl?.trim(),
+    APNA_VAULT_TOKEN:
+      env.vaultToken === undefined ? undefined : Redacted.value(env.vaultToken).trim(),
+  } as const;
+  const configured = VAULT_REPLICA_ENV_NAMES.filter((name) => (values[name]?.length ?? 0) > 0);
+  if (configured.length === 0) return undefined;
+  if (configured.length !== VAULT_REPLICA_ENV_NAMES.length) {
+    return yield* new VaultReplicaConfigError({
+      missing: VAULT_REPLICA_ENV_NAMES.filter((name) => (values[name]?.length ?? 0) === 0),
+    });
+  }
+
+  return {
+    root: values.APNA_VAULT_ROOT!,
+    vaultId: values.APNA_VAULT_ID!,
+    baseUrl: values.APNA_VAULT_URL!,
+    token: Redacted.make(values.APNA_VAULT_TOKEN!),
+  } satisfies ServerConfig.VaultReplicaConfig;
 });
 
 export interface CliServerFlags {
@@ -209,6 +267,14 @@ export const resolveServerConfig = (
     const path = yield* Path.Path;
     const fs = yield* FileSystem.FileSystem;
     const env = yield* EnvServerConfig;
+    const rawVaultReplica = yield* resolveVaultReplicaConfig(env);
+    const vaultReplica =
+      rawVaultReplica === undefined
+        ? undefined
+        : {
+            ...rawVaultReplica,
+            root: path.resolve(yield* expandHomePath(rawVaultReplica.root)),
+          };
     const normalizedFlags = {
       mode: flags.mode ?? Option.none(),
       port: flags.port ?? Option.none(),
@@ -366,6 +432,7 @@ export const resolveServerConfig = (
       logWebSocketEvents,
       tailscaleServeEnabled,
       tailscaleServePort,
+      ...(vaultReplica === undefined ? {} : { vaultReplica }),
     };
 
     return config;
