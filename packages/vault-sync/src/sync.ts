@@ -11,6 +11,7 @@ import {
   writeSyncState,
   SYNC_STATE_SCHEMA,
 } from "./syncState.ts";
+import { readSyncStatus, type VaultSyncStatus } from "./syncStatus.ts";
 import { applyVaultManifest, scanVault, type ApplyManifestResult } from "./vault.ts";
 
 export class RemoteManifestChangedError extends Schema.TaggedErrorClass<RemoteManifestChangedError>()(
@@ -105,6 +106,7 @@ export const pullVault = Effect.fn("pullVault")(function* (options: PullVaultOpt
 });
 
 export interface VaultStatus {
+  readonly syncStatus: VaultSyncStatus | null;
   readonly remote: { readonly revision: string; readonly etag: string } | null;
   readonly inSync: boolean;
   /** Files present locally but absent remotely. */
@@ -126,6 +128,7 @@ export interface StatusVaultOptions {
 export const statusVault = Effect.fn("statusVault")(function* (options: StatusVaultOptions) {
   const local = yield* scanVault(options.root, options);
   const remote = yield* options.client.getManifest(options.vaultId);
+  const syncStatus = yield* readSyncStatus(options.root);
   const remoteFiles = new Map<string, string>(
     (remote?.manifest ?? emptyManifest).files.map((entry) => [entry.path, entry.sha256]),
   );
@@ -141,6 +144,7 @@ export const statusVault = Effect.fn("statusVault")(function* (options: StatusVa
   const remoteOnly = [...remoteFiles.keys()].filter((filePath) => !localPaths.has(filePath));
 
   const status: VaultStatus = {
+    syncStatus,
     remote: remote === null ? null : { revision: remote.manifest.revision, etag: remote.etag },
     inSync:
       remote !== null && localOnly.length === 0 && remoteOnly.length === 0 && modified.length === 0,

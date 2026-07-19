@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import type * as PlatformError from "effect/PlatformError";
+import type * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -12,6 +13,7 @@ import * as Stream from "effect/Stream";
 
 import { ManifestPreconditionError } from "./client.ts";
 import { RemoteManifestChangedError } from "./sync.ts";
+import { syncErrorMessage, updateSyncStatus } from "./syncStatus.ts";
 import { isIgnoredVaultPath } from "./vault.ts";
 
 export const WATCH_DEBOUNCE = Duration.seconds(2);
@@ -20,13 +22,18 @@ export interface WatchPushResult {
   readonly revision: string;
 }
 
+export interface WatchPullResult {
+  readonly revision: string;
+}
+
 export interface WatchSyncOperations<PushError, PullError, Requirements> {
   readonly push: () => Effect.Effect<WatchPushResult, PushError, Requirements>;
-  readonly pull: () => Effect.Effect<unknown, PullError, Requirements>;
+  readonly pull: () => Effect.Effect<WatchPullResult, PullError, Requirements>;
 }
 
 export interface WatchCycleResult extends WatchPushResult {
   readonly retried: boolean;
+  readonly pulledRevision: string | null;
 }
 
 const isRemoteManifestChangedError = Schema.is(RemoteManifestChangedError);
@@ -41,13 +48,13 @@ export function runWatchCycle<PushError, PullError, Requirements>(
   operations: WatchSyncOperations<PushError, PullError, Requirements>,
 ): Effect.Effect<WatchCycleResult, PushError | PullError, Requirements> {
   return operations.push().pipe(
-    Effect.map((result) => ({ ...result, retried: false })),
+    Effect.map((result) => ({ ...result, retried: false, pulledRevision: null })),
     Effect.catch((error) => {
       if (!isStalePushError(error)) return Effect.fail(error);
       return Effect.gen(function* () {
-        yield* operations.pull();
+        const pulled = yield* operations.pull();
         const result = yield* operations.push();
-        return { ...result, retried: true };
+        return { ...result, retried: true, pulledRevision: pulled.revision };
       });
     }),
   );
@@ -118,35 +125,85 @@ export function watchVaultEvents(
   return debounceWatchEvents(events, debounce);
 }
 
-function errorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.replaceAll(/\s+/gu, " ").trim().slice(0, 500);
+function runWatchBatch<PushError, PullError, Requirements>(
+  root: string,
+  paths: ReadonlyArray<string>,
+  operations: WatchSyncOperations<PushError, PullError, Requirements>,
+) {
+  return Effect.gen(function* () {
+    yield* updateSyncStatus(root, { state: "pending", pendingPaths: paths });
+    const result = yield* runWatchCycle({
+      push: () =>
+        Effect.gen(function* () {
+          yield* updateSyncStatus(root, { state: "pushing", pendingPaths: paths });
+          return yield* operations.push();
+        }),
+      pull: () =>
+        Effect.gen(function* () {
+          yield* updateSyncStatus(root, { state: "pulling", pendingPaths: paths });
+          const pulled = yield* operations.pull();
+          yield* updateSyncStatus(root, {
+            state: "pulling",
+            pendingPaths: paths,
+            lastPulledRevision: pulled.revision,
+          });
+          return pulled;
+        }),
+    });
+    yield* updateSyncStatus(root, {
+      state: "clean",
+      lastPushedRevision: result.revision,
+      ...(result.pulledRevision === null ? {} : { lastPulledRevision: result.pulledRevision }),
+      successful: true,
+    });
+    yield* Console.log(
+      `${paths.length} files changed; pushed revision ${result.revision}${
+        result.retried ? " after stale pull" : ""
+      }.`,
+    );
+  }).pipe(
+    Effect.catchCause((cause) => {
+      if (Cause.hasInterrupts(cause)) return Effect.interrupt;
+      const message = syncErrorMessage(Cause.squash(cause));
+      return updateSyncStatus(root, {
+        state: "error",
+        pendingPaths: paths,
+        lastError: message,
+      }).pipe(
+        Effect.catchCause((statusCause) =>
+          Console.error(
+            `Could not write vault sync error status: ${syncErrorMessage(Cause.squash(statusCause))}`,
+          ),
+        ),
+        Effect.andThen(Console.error(`${paths.length} files changed; push failed: ${message}`)),
+      );
+    }),
+  );
+}
+
+/** Runs already-batched watch events serially. Exported for deterministic daemon tests. */
+export function runVaultWatchBatches<
+  BatchError,
+  PushError,
+  PullError,
+  BatchRequirements,
+  Requirements,
+>(
+  root: string,
+  batches: Stream.Stream<ReadonlyArray<string>, BatchError, BatchRequirements>,
+  operations: WatchSyncOperations<PushError, PullError, Requirements>,
+) {
+  return batches.pipe(Stream.runForEach((paths) => runWatchBatch(root, paths, operations)));
 }
 
 /** Runs watch batches serially; cycle failures are logged and never end the daemon. */
 export function runVaultWatch<PushError, PullError, Requirements>(
   root: string,
   operations: WatchSyncOperations<PushError, PullError, Requirements>,
-): Effect.Effect<void, PlatformError.PlatformError, FileSystem.FileSystem | Requirements> {
-  return watchVaultEvents(root).pipe(
-    Stream.runForEach((paths) =>
-      runWatchCycle(operations).pipe(
-        Effect.tap((result) =>
-          Console.log(
-            `${paths.length} files changed; pushed revision ${result.revision}${
-              result.retried ? " after stale pull" : ""
-            }.`,
-          ),
-        ),
-        Effect.asVoid,
-        Effect.catchCause((cause) =>
-          Cause.hasInterrupts(cause)
-            ? Effect.interrupt
-            : Console.error(
-                `${paths.length} files changed; push failed: ${errorMessage(Cause.squash(cause))}`,
-              ),
-        ),
-      ),
-    ),
-  );
+): Effect.Effect<
+  void,
+  PlatformError.PlatformError,
+  FileSystem.FileSystem | Path.Path | Requirements
+> {
+  return runVaultWatchBatches(root, watchVaultEvents(root), operations);
 }
