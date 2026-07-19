@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
@@ -224,5 +225,523 @@ it.layer(NodeServices.layer)("vault watch status lifecycle", (it) => {
       assert.equal(finalStatus?.state, "clean");
       assert.equal(finalStatus?.lastPushedRevision, "revision-2");
     }),
+  );
+
+  it.effect("reconciles missing and stale local state before processing batches", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "vault-watch-startup-" });
+
+      for (const initialLocalRevision of [null, "remote-old"] as const) {
+        const calls: Array<string> = [];
+        let localRevision: string | null = initialLocalRevision;
+        yield* runVaultWatchBatches(
+          root,
+          Stream.fromIterable<ReadonlyArray<string>>([]),
+          {
+            push: () => Effect.succeed({ revision: "unexpected" }),
+            pull: () =>
+              Effect.sync(() => {
+                calls.push("pull");
+                localRevision = "remote-current";
+                return { revision: "remote-current" };
+              }),
+          },
+          {
+            pollInterval: 0,
+            revisions: {
+              remote: () => Effect.succeed("remote-current"),
+              local: () => Effect.succeed(localRevision),
+            },
+          },
+        );
+        assert.deepEqual(calls, ["pull"]);
+      }
+    }),
+  );
+
+  it.effect("pulls a fresh replica before its first local batch can push", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "vault-watch-fresh-" });
+      const calls: Array<string> = [];
+      let localRevision: string | null = null;
+
+      yield* runVaultWatchBatches(
+        root,
+        Stream.fromIterable([["note.md"]]),
+        {
+          push: () =>
+            Effect.sync(() => {
+              calls.push("push");
+              return { revision: "local-after-pull" };
+            }),
+          pull: () =>
+            Effect.sync(() => {
+              calls.push("pull");
+              localRevision = "remote-1";
+              return { revision: "remote-1" };
+            }),
+        },
+        {
+          pollInterval: 0,
+          revisions: {
+            remote: () =>
+              Effect.sync(() => {
+                calls.push("remote");
+                return "remote-1";
+              }),
+            local: () =>
+              Effect.sync(() => {
+                calls.push("local");
+                return localRevision;
+              }),
+          },
+        },
+      );
+
+      assert.deepEqual(calls, ["remote", "local", "pull", "push"]);
+    }),
+  );
+
+  it.effect("does not let a failed startup pull expose a fresh replica to pushes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "vault-watch-startup-fail-" });
+        const batches = yield* Queue.make<ReadonlyArray<string>>();
+        const watchStarted = yield* Deferred.make<void>();
+        const batchStream = Stream.fromEffect(Deferred.succeed(watchStarted, undefined)).pipe(
+          Stream.drain,
+          Stream.concat(Stream.fromQueue(batches)),
+        );
+        const pushed = yield* Deferred.make<void>();
+        let allowPull = false;
+        let localRevision: string | null = null;
+        let pullAttempts = 0;
+        const pullAttempted = yield* Queue.make<void>();
+        let pushes = 0;
+
+        const fiber = yield* runVaultWatchBatches(
+          root,
+          batchStream,
+          {
+            push: () =>
+              Effect.gen(function* () {
+                pushes += 1;
+                yield* Deferred.succeed(pushed, undefined);
+                return { revision: "local-2" };
+              }),
+            pull: () =>
+              Effect.gen(function* () {
+                pullAttempts += 1;
+                yield* Queue.offer(pullAttempted, undefined);
+                if (!allowPull) {
+                  return yield* new VaultCloudRequestError({ operation: "download object" });
+                }
+                localRevision = "remote-1";
+                return { revision: "remote-1" };
+              }),
+          },
+          {
+            pollInterval: "1 second",
+            revisions: {
+              remote: () => Effect.succeed("remote-1"),
+              local: () => Effect.succeed(localRevision),
+            },
+          },
+        ).pipe(Effect.forkScoped);
+        yield* Deferred.await(watchStarted);
+        yield* Queue.take(pullAttempted);
+        yield* Queue.offer(batches, ["note.md"]);
+        yield* Queue.take(pullAttempted);
+
+        assert.equal(pushes, 0);
+        let failedStatus: VaultSyncStatus | null = null;
+        while (failedStatus?.state !== "error") {
+          yield* Effect.yieldNow;
+          failedStatus = yield* readSyncStatus(root);
+        }
+
+        allowPull = true;
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("1 second");
+        yield* Deferred.await(pushed);
+        assert.equal(pushes, 1);
+        yield* Fiber.interrupt(fiber);
+      }),
+    ),
+  );
+
+  it.effect("polls revisions, skips unchanged remotes, and pulls changed remotes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "vault-watch-poll-" });
+        const batches = yield* Queue.make<ReadonlyArray<string>>();
+        let remoteRevision = "remote-1";
+        let localRevision = "remote-1";
+        let checks = 0;
+        let pulls = 0;
+        const pullCompleted = yield* Queue.make<string>();
+
+        const fiber = yield* runVaultWatchBatches(
+          root,
+          Stream.fromQueue(batches),
+          {
+            push: () => Effect.succeed({ revision: "local" }),
+            pull: () =>
+              Effect.gen(function* () {
+                pulls += 1;
+                localRevision = remoteRevision;
+                yield* Queue.offer(pullCompleted, remoteRevision);
+                return { revision: remoteRevision };
+              }),
+          },
+          {
+            pollInterval: "1 second",
+            revisions: {
+              remote: () =>
+                Effect.sync(() => {
+                  checks += 1;
+                  return remoteRevision;
+                }),
+              local: () => Effect.succeed(localRevision),
+            },
+          },
+        ).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+
+        assert.equal(checks, 1);
+        yield* TestClock.adjust("1 second");
+        assert.equal(checks, 2);
+        assert.equal(pulls, 0);
+
+        remoteRevision = "remote-2";
+        yield* TestClock.adjust("1 second");
+        assert.equal(yield* Queue.take(pullCompleted), "remote-2");
+        assert.equal(checks, 3);
+        assert.equal(pulls, 1);
+        let status: VaultSyncStatus | null = null;
+        while (status?.lastPulledRevision !== "remote-2") {
+          yield* Effect.yieldNow;
+          status = yield* readSyncStatus(root);
+        }
+        yield* Fiber.interrupt(fiber);
+      }),
+    ),
+  );
+
+  it.effect("shows pulling during a poll pull and returns to clean", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "vault-watch-poll-status-" });
+        const batches = yield* Queue.make<ReadonlyArray<string>>();
+        const pullStarted = yield* Deferred.make<void>();
+        const finishPull = yield* Deferred.make<void>();
+        let remoteRevision = "remote-1";
+        let localRevision = "remote-1";
+
+        const fiber = yield* runVaultWatchBatches(
+          root,
+          Stream.fromQueue(batches),
+          {
+            push: () => Effect.succeed({ revision: "local" }),
+            pull: () =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(pullStarted, undefined);
+                yield* Deferred.await(finishPull);
+                localRevision = remoteRevision;
+                return { revision: remoteRevision };
+              }),
+          },
+          {
+            pollInterval: "1 second",
+            revisions: {
+              remote: () => Effect.succeed(remoteRevision),
+              local: () => Effect.succeed(localRevision),
+            },
+          },
+        ).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+        remoteRevision = "remote-2";
+        yield* TestClock.adjust("1 second");
+        yield* Deferred.await(pullStarted);
+        assert.equal((yield* readSyncStatus(root))?.state, "pulling");
+
+        yield* Deferred.succeed(finishPull, undefined);
+        for (let attempt = 0; attempt < 10; attempt += 1) {
+          yield* Effect.yieldNow;
+          if ((yield* readSyncStatus(root))?.state === "clean") break;
+        }
+        const status = yield* readSyncStatus(root);
+        assert.equal(status?.state, "clean");
+        assert.equal(status?.lastPulledRevision, "remote-2");
+        yield* Fiber.interrupt(fiber);
+      }),
+    ),
+  );
+
+  it.effect("serializes a due poll behind an in-flight push batch", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "vault-watch-serialize-" });
+        const batches = yield* Queue.make<ReadonlyArray<string>>();
+        const pushStarted = yield* Deferred.make<void>();
+        const finishPush = yield* Deferred.make<void>();
+        const remoteChecked = yield* Queue.make<void>();
+        let remoteChecks = 0;
+
+        const fiber = yield* runVaultWatchBatches(
+          root,
+          Stream.fromQueue(batches),
+          {
+            push: () =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(pushStarted, undefined);
+                yield* Deferred.await(finishPush);
+                return { revision: "local-2" };
+              }),
+            pull: () => Effect.succeed({ revision: "remote-1" }),
+          },
+          {
+            pollInterval: "1 second",
+            revisions: {
+              remote: () =>
+                Effect.gen(function* () {
+                  remoteChecks += 1;
+                  yield* Queue.offer(remoteChecked, undefined);
+                  return "remote-1";
+                }),
+              local: () => Effect.succeed("remote-1"),
+            },
+          },
+        ).pipe(Effect.forkScoped);
+        yield* Queue.take(remoteChecked);
+        yield* Queue.offer(batches, ["note.md"]);
+        yield* Deferred.await(pushStarted);
+
+        yield* TestClock.adjust("1 second");
+        assert.equal(remoteChecks, 1);
+
+        yield* Deferred.succeed(finishPush, undefined);
+        yield* Queue.take(remoteChecked);
+        assert.equal(remoteChecks, 2);
+        yield* Fiber.interrupt(fiber);
+      }),
+    ),
+  );
+
+  it.effect("records a failed poll and continues polling until it recovers", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "vault-watch-poll-fail-" });
+        const batches = yield* Queue.make<ReadonlyArray<string>>();
+        const watchStarted = yield* Deferred.make<void>();
+        const batchStream = Stream.fromEffect(Deferred.succeed(watchStarted, undefined)).pipe(
+          Stream.drain,
+          Stream.concat(Stream.fromQueue(batches)),
+        );
+        let remoteRevision = "remote-1";
+        let localRevision = "remote-1";
+        let attempts = 0;
+        const pullAttempted = yield* Queue.make<void>();
+        const pushed = yield* Deferred.make<void>();
+
+        const fiber = yield* runVaultWatchBatches(
+          root,
+          batchStream,
+          {
+            push: () =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(pushed, undefined);
+                return { revision: "local" };
+              }),
+            pull: () =>
+              Effect.gen(function* () {
+                attempts += 1;
+                yield* Queue.offer(pullAttempted, undefined);
+                if (attempts === 1) {
+                  return yield* new VaultCloudRequestError({ operation: "download object" });
+                }
+                localRevision = remoteRevision;
+                return { revision: remoteRevision };
+              }),
+          },
+          {
+            pollInterval: "1 second",
+            revisions: {
+              remote: () => Effect.succeed(remoteRevision),
+              local: () => Effect.succeed(localRevision),
+            },
+          },
+        ).pipe(Effect.forkScoped);
+        yield* Deferred.await(watchStarted);
+        yield* Effect.yieldNow;
+        remoteRevision = "remote-2";
+        yield* TestClock.adjust("1 second");
+        yield* Queue.take(pullAttempted);
+        assert.equal(attempts, 1);
+        let failedStatus: VaultSyncStatus | null = null;
+        while (failedStatus?.state !== "error") {
+          yield* Effect.yieldNow;
+          failedStatus = yield* readSyncStatus(root);
+        }
+
+        yield* Queue.offer(batches, ["note.md"]);
+        yield* Queue.take(pullAttempted);
+        yield* Deferred.await(pushed);
+        assert.equal(attempts, 2);
+        let recoveredStatus: VaultSyncStatus | null = null;
+        while (recoveredStatus?.state !== "clean") {
+          yield* Effect.yieldNow;
+          recoveredStatus = yield* readSyncStatus(root);
+        }
+        yield* Fiber.interrupt(fiber);
+      }),
+    ),
+  );
+
+  it.effect("clears a poll error after a later unchanged revision check succeeds", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "vault-watch-check-recover-" });
+        const batches = yield* Queue.make<ReadonlyArray<string>>();
+        const watchStarted = yield* Deferred.make<void>();
+        const batchStream = Stream.fromEffect(Deferred.succeed(watchStarted, undefined)).pipe(
+          Stream.drain,
+          Stream.concat(Stream.fromQueue(batches)),
+        );
+        let checks = 0;
+
+        const fiber = yield* runVaultWatchBatches(
+          root,
+          batchStream,
+          {
+            push: () => Effect.succeed({ revision: "local" }),
+            pull: () => Effect.succeed({ revision: "remote-1" }),
+          },
+          {
+            pollInterval: "1 second",
+            revisions: {
+              remote: () => {
+                checks += 1;
+                return checks === 2
+                  ? Effect.fail(new VaultCloudRequestError({ operation: "get manifest" }))
+                  : Effect.succeed("remote-1");
+              },
+              local: () => Effect.succeed("remote-1"),
+            },
+          },
+        ).pipe(Effect.forkScoped);
+        yield* Deferred.await(watchStarted);
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("1 second");
+        let failedStatus: VaultSyncStatus | null = null;
+        while (failedStatus?.state !== "error") {
+          yield* Effect.yieldNow;
+          failedStatus = yield* readSyncStatus(root);
+        }
+
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("1 second");
+        assert.equal(checks, 3);
+        let recoveredStatus: VaultSyncStatus | null = null;
+        while (recoveredStatus?.state !== "clean") {
+          yield* Effect.yieldNow;
+          recoveredStatus = yield* readSyncStatus(root);
+        }
+        yield* Fiber.interrupt(fiber);
+      }),
+    ),
+  );
+
+  it.effect("does not clear an unrelated push error on an unchanged poll", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "vault-watch-push-error-" });
+        const batches = yield* Queue.make<ReadonlyArray<string>>();
+        const remoteChecked = yield* Queue.make<void>();
+        let checks = 0;
+
+        const fiber = yield* runVaultWatchBatches(
+          root,
+          Stream.fromQueue(batches),
+          {
+            push: () => Effect.fail(new VaultCloudRequestError({ operation: "upload object" })),
+            pull: () => Effect.succeed({ revision: "remote-1" }),
+          },
+          {
+            pollInterval: "1 second",
+            revisions: {
+              remote: () =>
+                Effect.gen(function* () {
+                  checks += 1;
+                  yield* Queue.offer(remoteChecked, undefined);
+                  return "remote-1";
+                }),
+              local: () => Effect.succeed("remote-1"),
+            },
+          },
+        ).pipe(Effect.forkScoped);
+        yield* Queue.take(remoteChecked);
+        yield* Queue.offer(batches, ["note.md"]);
+
+        let failedStatus: VaultSyncStatus | null = null;
+        while (failedStatus?.state !== "error") {
+          yield* Effect.yieldNow;
+          failedStatus = yield* readSyncStatus(root);
+        }
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("1 second");
+        yield* Queue.take(remoteChecked);
+
+        assert.equal(checks, 2);
+        assert.equal((yield* readSyncStatus(root))?.state, "error");
+        yield* Fiber.interrupt(fiber);
+      }),
+    ),
+  );
+
+  it.effect("disables interval checks when the poll interval is zero", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "vault-watch-no-poll-" });
+        const batches = yield* Queue.make<ReadonlyArray<string>>();
+        let checks = 0;
+
+        const fiber = yield* runVaultWatchBatches(
+          root,
+          Stream.fromQueue(batches),
+          {
+            push: () => Effect.succeed({ revision: "local" }),
+            pull: () => Effect.succeed({ revision: "remote-1" }),
+          },
+          {
+            pollInterval: 0,
+            revisions: {
+              remote: () =>
+                Effect.sync(() => {
+                  checks += 1;
+                  return "remote-1";
+                }),
+              local: () => Effect.succeed("remote-1"),
+            },
+          },
+        ).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+        assert.equal(checks, 1);
+
+        yield* TestClock.adjust("1 hour");
+        assert.equal(checks, 1);
+        yield* Fiber.interrupt(fiber);
+      }),
+    ),
   );
 });
