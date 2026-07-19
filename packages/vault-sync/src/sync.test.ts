@@ -105,6 +105,75 @@ it.layer(NodeServices.layer)("push/pull sync", (it) => {
     }),
   );
 
+  it.effect("reloads .vaultignore between push cycles", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { client } = makeFakeCloud();
+      const root = yield* makeRoot("vault-sync-ignore-edit-");
+      yield* fs.writeFileString(path.join(root, "first.md"), "first\n");
+      yield* fs.writeFileString(path.join(root, "second.md"), "second\n");
+      yield* fs.writeFileString(path.join(root, ".vaultignore"), "first.md\n");
+
+      const first = yield* pushVault(syncOptions(root, client, "rev-1"));
+      assert.deepEqual(
+        first.manifest.files.map((entry) => entry.path),
+        ["second.md"],
+      );
+
+      yield* fs.writeFileString(path.join(root, ".vaultignore"), "second.md\n");
+      const second = yield* pushVault(syncOptions(root, client, "rev-2"));
+      assert.deepEqual(
+        second.manifest.files.map((entry) => entry.path),
+        ["first.md"],
+      );
+    }),
+  );
+
+  it.effect("pull and status ignore matching remote paths", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { client } = makeFakeCloud();
+      const source = yield* makeRoot("vault-sync-ignore-source-");
+      const restore = yield* makeRoot("vault-sync-ignore-restore-");
+      yield* fs.makeDirectory(path.join(source, "repo"), { recursive: true });
+      yield* fs.writeFileString(path.join(source, "repo", "README.md"), "remote repo\n");
+      yield* fs.writeFileString(path.join(source, "kept.md"), "kept\n");
+      yield* pushVault(syncOptions(source, client, "rev-1"));
+      yield* fs.writeFileString(path.join(restore, ".vaultignore"), "repo\n");
+
+      const pulled = yield* pullVault({ root: restore, vaultId: "test-vault", client });
+      assert.deepEqual(pulled.result.created, ["kept.md"]);
+      assert.isFalse(yield* fs.exists(path.join(restore, "repo", "README.md")));
+
+      const status = yield* statusVault(syncOptions(restore, client, "rev-status"));
+      assert.isTrue(status.inSync);
+      assert.deepEqual(status.remoteOnly, []);
+    }),
+  );
+
+  it.effect("pull does not prune a path ignored after the initial sync", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { client } = makeFakeCloud();
+      const source = yield* makeRoot("vault-sync-ignore-prune-source-");
+      const restore = yield* makeRoot("vault-sync-ignore-prune-restore-");
+      yield* fs.writeFileString(path.join(source, "ignored.md"), "keep locally\n");
+      yield* pushVault(syncOptions(source, client, "rev-1"));
+      yield* pullVault({ root: restore, vaultId: "test-vault", client });
+
+      yield* fs.writeFileString(path.join(restore, ".vaultignore"), "ignored.md\n");
+      yield* fs.remove(path.join(source, "ignored.md"));
+      yield* pushVault(syncOptions(source, client, "rev-2"));
+      const pulled = yield* pullVault({ root: restore, vaultId: "test-vault", client });
+
+      assert.deepEqual(pulled.result.deleted, []);
+      assert.equal(yield* fs.readFileString(path.join(restore, "ignored.md")), "keep locally\n");
+    }),
+  );
+
   it.effect("concurrent edits: stale push is rejected, pull keeps the losing edit", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

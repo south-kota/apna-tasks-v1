@@ -30,6 +30,10 @@
       "types": "./src/vault.ts",
       "import": "./src/vault.ts"
     },
+    "./vaultIgnore": {
+      "types": "./src/vaultIgnore.ts",
+      "import": "./src/vaultIgnore.ts"
+    },
     "./watch": {
       "types": "./src/watch.ts",
       "import": "./src/watch.ts"

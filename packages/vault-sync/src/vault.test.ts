@@ -44,10 +44,21 @@ it.layer(NodeServices.layer)("vault filesystem sync", (it) => {
       const root = yield* makeRoot;
       yield* fs.makeDirectory(path.join(root, "nested"), { recursive: true });
       yield* fs.writeFileString(path.join(root, "note.md"), "# hello\n");
+      yield* fs.writeFileString(path.join(root, "private.md"), "ignored file\n");
       yield* fs.writeFileString(path.join(root, "nested", "record.json"), "{}\n");
       yield* fs.writeFile(path.join(root, "pixel.png"), Uint8Array.from([137, 80, 78, 71]));
       yield* fs.writeFileString(path.join(root, "binary.exe"), "skipped");
       yield* fs.symlink(path.join(root, "note.md"), path.join(root, "linked.md"));
+      yield* fs.makeDirectory(path.join(root, "projects", "chattu"), { recursive: true });
+      yield* fs.writeFileString(path.join(root, "projects", "chattu", "README.md"), "ignored");
+      yield* fs.makeDirectory(path.join(root, "Airbnb old", "drafts"), { recursive: true });
+      yield* fs.makeDirectory(path.join(root, "Airbnb old", "published"), { recursive: true });
+      yield* fs.writeFileString(path.join(root, "Airbnb old", "drafts", "idea.md"), "ignored");
+      yield* fs.writeFileString(path.join(root, "Airbnb old", "published", "note.md"), "kept");
+      yield* fs.writeFileString(
+        path.join(root, ".vaultignore"),
+        "# local repositories\nchattu\nAirbnb old/drafts\nprivate.md\n",
+      );
       for (const ignored of [".git", ".obsidian", "node_modules", ".apnatasks", ".cache"]) {
         yield* fs.makeDirectory(path.join(root, ignored), { recursive: true });
         yield* fs.writeFileString(path.join(root, ignored, "hidden.md"), "ignored");
@@ -62,7 +73,7 @@ it.layer(NodeServices.layer)("vault filesystem sync", (it) => {
 
       assert.deepEqual(
         manifest.files.map((entry) => entry.path),
-        ["nested/record.json", "note.md", "pixel.png"],
+        ["Airbnb old/published/note.md", "nested/record.json", "note.md", "pixel.png"],
       );
     }),
   );

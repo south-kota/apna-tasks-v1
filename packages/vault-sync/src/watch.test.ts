@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -138,6 +139,27 @@ describe("vault watch", () => {
 });
 
 it.layer(NodeServices.layer)("vault watch status lifecycle", (it) => {
+  it.effect("does not run a cycle or mark pending for ignored paths", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "vault-watch-ignore-" });
+      yield* fs.writeFileString(path.join(root, ".vaultignore"), "repo\n");
+      let pushes = 0;
+
+      yield* runVaultWatchBatches(root, Stream.fromIterable([["projects/repo/note.md"]]), {
+        push: () => {
+          pushes += 1;
+          return Effect.succeed({ revision: "unexpected" });
+        },
+        pull: () => Effect.succeed({ revision: "unexpected" }),
+      });
+
+      assert.equal(pushes, 0);
+      assert.isNull(yield* readSyncStatus(root));
+    }),
+  );
+
   it.effect("records the pulled and pushed revisions after a stale-remote retry", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
