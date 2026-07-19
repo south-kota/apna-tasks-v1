@@ -13,29 +13,14 @@ import {
   type VaultManifest,
   type VaultManifestEntry,
 } from "./manifest.ts";
-
-/** Vault-local state directory. Holds sync state and conflict copies. */
-export const VAULT_STATE_DIRECTORY = ".apnatasks";
-
-const excludedDirectoryNames = new Set([
+import {
+  isIgnoredVaultPath,
+  loadVaultIgnore,
   VAULT_STATE_DIRECTORY,
-  ".cache",
-  ".git",
-  ".obsidian",
-  ".vite-plus",
-  "build",
-  "dist",
-  "node_modules",
-]);
+  type VaultIgnoreRules,
+} from "./vaultIgnore.ts";
 
-/** Whether a vault-relative path is inside a directory excluded from snapshots. */
-export function isIgnoredVaultPath(input: string): boolean {
-  const normalized = normalizeVaultPath(input);
-  return (
-    normalized === null ||
-    normalized.split("/").some((segment) => excludedDirectoryNames.has(segment))
-  );
-}
+export { isIgnoredVaultPath, VAULT_STATE_DIRECTORY };
 
 export interface ScanVaultOptions {
   readonly vaultId: string;
@@ -54,6 +39,8 @@ export interface ApplyManifestOptions {
   readonly baseFiles?: ReadonlyMap<string, string>;
   /** Delete local files that the remote manifest no longer contains (only when unmodified locally). */
   readonly prune?: boolean;
+  /** Ignore rules loaded for this pull operation. */
+  readonly ignore?: VaultIgnoreRules;
 }
 
 export interface ApplyManifestResult {
@@ -89,6 +76,7 @@ export class VaultObjectIntegrityError extends Schema.TaggedErrorClass<VaultObje
 function collectEntries(
   root: string,
   current: string,
+  ignore: VaultIgnoreRules,
 ): Effect.Effect<
   ReadonlyArray<VaultManifestEntry>,
   PlatformError.PlatformError,
@@ -114,15 +102,13 @@ function collectEntries(
       // canonical path before stat keeps both file and directory symlinks out.
       if (canonicalPath === null || canonicalPath !== path.normalize(absolutePath)) continue;
       const info = yield* fs.stat(absolutePath);
+      const relativePath = normalizeVaultPath(path.relative(root, absolutePath));
+      if (relativePath === null || isIgnoredVaultPath(relativePath, ignore)) continue;
       if (info.type === "Directory") {
-        if (!excludedDirectoryNames.has(name)) {
-          files.push(...(yield* collectEntries(root, absolutePath)));
-        }
+        files.push(...(yield* collectEntries(root, absolutePath, ignore)));
         continue;
       }
       if (info.type !== "File") continue;
-      const relativePath = normalizeVaultPath(path.relative(root, absolutePath));
-      if (relativePath === null) continue;
       const mediaType = mediaTypeForVaultPath(relativePath);
       if (mediaType === null) continue;
       const bytes = yield* fs.readFile(absolutePath);
@@ -140,6 +126,7 @@ function collectEntries(
 export const scanVault = Effect.fn("scanVault")(function* (
   root: string,
   options: ScanVaultOptions,
+  loadedIgnore?: VaultIgnoreRules,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -148,12 +135,13 @@ export const scanVault = Effect.fn("scanVault")(function* (
   if (stats.type !== "Directory") {
     return yield* new VaultRootNotDirectoryError({ root: absoluteRoot });
   }
+  const ignore = loadedIgnore ?? (yield* loadVaultIgnore(absoluteRoot));
   return yield* decodeManifestUnknown({
     schema: VAULT_MANIFEST_SCHEMA,
     vaultId: options.vaultId,
     revision: options.revision,
     generatedAt: options.generatedAt,
-    files: yield* collectEntries(absoluteRoot, absoluteRoot),
+    files: yield* collectEntries(absoluteRoot, absoluteRoot, ignore),
   });
 });
 
@@ -230,8 +218,10 @@ export function applyVaultManifest<E, R>(
     const conflicts: Array<{ path: string; localCopyPath: string }> = [];
     const deleted: Array<string> = [];
     const keptModified: Array<string> = [];
+    const ignore = options.ignore;
 
     for (const entry of manifest.files) {
+      if (isIgnoredVaultPath(entry.path, ignore)) continue;
       const destination = resolveInside(path, absoluteRoot, entry.path);
       const localBytes = yield* readIfFile(destination);
       if (localBytes !== null && sha256Hex(localBytes) === entry.sha256) {
@@ -268,6 +258,7 @@ export function applyVaultManifest<E, R>(
     if (options.prune === true) {
       const remotePaths = new Set(manifest.files.map((entry) => entry.path));
       for (const [basePath, baseDigest] of baseFiles) {
+        if (isIgnoredVaultPath(basePath, ignore)) continue;
         if (remotePaths.has(basePath)) continue;
         const destination = resolveInside(path, absoluteRoot, basePath);
         const localBytes = yield* readIfFile(destination);

@@ -14,7 +14,7 @@ import * as Stream from "effect/Stream";
 import { ManifestPreconditionError } from "./client.ts";
 import { RemoteManifestChangedError } from "./sync.ts";
 import { syncErrorMessage, updateSyncStatus } from "./syncStatus.ts";
-import { isIgnoredVaultPath } from "./vault.ts";
+import { isIgnoredVaultPath, loadVaultIgnore } from "./vaultIgnore.ts";
 
 export const WATCH_DEBOUNCE = Duration.seconds(2);
 
@@ -125,7 +125,7 @@ export function watchVaultEvents(
   return debounceWatchEvents(events, debounce);
 }
 
-function runWatchBatch<PushError, PullError, Requirements>(
+function runIncludedWatchBatch<PushError, PullError, Requirements>(
   root: string,
   paths: ReadonlyArray<string>,
   operations: WatchSyncOperations<PushError, PullError, Requirements>,
@@ -179,6 +179,19 @@ function runWatchBatch<PushError, PullError, Requirements>(
       );
     }),
   );
+}
+
+function runWatchBatch<PushError, PullError, Requirements>(
+  root: string,
+  paths: ReadonlyArray<string>,
+  operations: WatchSyncOperations<PushError, PullError, Requirements>,
+) {
+  return Effect.gen(function* () {
+    const ignore = yield* loadVaultIgnore(root);
+    const includedPaths = paths.filter((filePath) => !isIgnoredVaultPath(filePath, ignore));
+    if (includedPaths.length === 0) return;
+    yield* runIncludedWatchBatch(root, includedPaths, operations);
+  });
 }
 
 /** Runs already-batched watch events serially. Exported for deterministic daemon tests. */

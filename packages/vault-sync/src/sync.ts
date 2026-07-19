@@ -13,6 +13,7 @@ import {
 } from "./syncState.ts";
 import { readSyncStatus, type VaultSyncStatus } from "./syncStatus.ts";
 import { applyVaultManifest, scanVault, type ApplyManifestResult } from "./vault.ts";
+import { isIgnoredVaultPath, loadVaultIgnore } from "./vaultIgnore.ts";
 
 export class RemoteManifestChangedError extends Schema.TaggedErrorClass<RemoteManifestChangedError>()(
   "RemoteManifestChangedError",
@@ -45,7 +46,8 @@ export interface PushVaultOptions {
 export const pushVault = Effect.fn("pushVault")(function* (options: PushVaultOptions) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const manifest = yield* scanVault(options.root, options);
+  const ignore = yield* loadVaultIgnore(options.root);
+  const manifest = yield* scanVault(options.root, options, ignore);
   const state = yield* readSyncState(options.root);
   const remote = yield* options.client.getManifest(options.vaultId);
 
@@ -88,6 +90,7 @@ export interface PullVaultOptions {
 }
 
 export const pullVault = Effect.fn("pullVault")(function* (options: PullVaultOptions) {
+  const ignore = yield* loadVaultIgnore(options.root);
   const remote = yield* options.client.getManifest(options.vaultId);
   if (remote === null) return yield* new RemoteVaultNotFoundError({ vaultId: options.vaultId });
   const state = yield* readSyncState(options.root);
@@ -95,7 +98,7 @@ export const pullVault = Effect.fn("pullVault")(function* (options: PullVaultOpt
     options.root,
     remote.manifest,
     (digest) => options.client.downloadObject(options.vaultId, digest),
-    { baseFiles: baseFilesFromState(state), prune: options.prune ?? true },
+    { baseFiles: baseFilesFromState(state), prune: options.prune ?? true, ignore },
   );
   yield* writeSyncState(options.root, {
     schema: SYNC_STATE_SCHEMA,
@@ -126,11 +129,14 @@ export interface StatusVaultOptions {
 }
 
 export const statusVault = Effect.fn("statusVault")(function* (options: StatusVaultOptions) {
-  const local = yield* scanVault(options.root, options);
+  const ignore = yield* loadVaultIgnore(options.root);
+  const local = yield* scanVault(options.root, options, ignore);
   const remote = yield* options.client.getManifest(options.vaultId);
   const syncStatus = yield* readSyncStatus(options.root);
   const remoteFiles = new Map<string, string>(
-    (remote?.manifest ?? emptyManifest).files.map((entry) => [entry.path, entry.sha256]),
+    (remote?.manifest ?? emptyManifest).files
+      .filter((entry) => !isIgnoredVaultPath(entry.path, ignore))
+      .map((entry) => [entry.path, entry.sha256]),
   );
 
   const localOnly: Array<string> = [];
