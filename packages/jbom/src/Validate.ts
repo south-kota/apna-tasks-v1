@@ -181,18 +181,10 @@ export const analyzeRecord = (input: {
 
   const definition = type === undefined ? undefined : types.get(type);
 
-  // Title: frontmatter `title`, alias `name` (warning), first H1, filename stem.
+  // Title: frontmatter `title`, alias `name` (first-class, ratified D2 amendment), first H1, filename stem.
   let title = asString(frontmatter["title"]);
   if (title === undefined && typeof frontmatter["name"] === "string") {
     title = frontmatter["name"];
-    if (definition !== undefined) {
-      diagnostics.push({
-        severity: "warning",
-        code: "title-from-name-alias",
-        message: "Using frontmatter `name` as the record title; prefer `title`.",
-        field: "name",
-      });
-    }
   }
   if (title === undefined) {
     title = scan.firstHeading ?? filenameStem(path);

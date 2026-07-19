@@ -68,10 +68,10 @@ describe("Validate.analyzeRecord", () => {
     assert.isTrue(analysis.diagnostics.every((d) => d.severity === "warning"));
   });
 
-  it("accepts `name` as a title alias with a warning", () => {
+  it("accepts `name` as a first-class title alias with no diagnostic", () => {
     const analysis = analyze("notes/named.md", "---\ntype: note\nname: Named Note\n---\n");
     assert.strictEqual(analysis.title, "Named Note");
-    assert.isTrue(analysis.diagnostics.some((d) => d.code === "title-from-name-alias"));
+    assert.isFalse(analysis.diagnostics.some((d) => d.field === "name" || d.field === "title"));
   });
 
   it("validates journals require a date", () => {
