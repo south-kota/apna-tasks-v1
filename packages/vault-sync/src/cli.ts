@@ -18,8 +18,11 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 
 import { makeVaultCloudClient } from "./client.ts";
 import { pullVault, pushVault, statusVault } from "./sync.ts";
+import { readSyncState } from "./syncState.ts";
 import { isSyncStatusStale, syncErrorMessage, updateSyncStatus } from "./syncStatus.ts";
 import { runVaultWatch } from "./watch.ts";
+
+export const DEFAULT_WATCH_POLL_INTERVAL_SECONDS = 10;
 
 export class SyncCliUsageError extends Schema.TaggedErrorClass<SyncCliUsageError>()(
   "SyncCliUsageError",
@@ -27,7 +30,7 @@ export class SyncCliUsageError extends Schema.TaggedErrorClass<SyncCliUsageError
 ) {
   override get message(): string {
     return [
-      "Usage: vault-sync <push|pull|status|watch> <vault-directory> --vault-id <id> [--force] [--no-prune]",
+      "Usage: vault-sync <push|pull|status|watch> <vault-directory> --vault-id <id> [--force] [--no-prune] [--poll-interval <seconds>]",
       "Environment: APNA_VAULT_URL, APNA_VAULT_TOKEN",
     ].join("\n");
   }
@@ -47,15 +50,26 @@ function valueAfter(args: ReadonlyArray<string>, flag: string): string | undefin
   return index < 0 ? undefined : args[index + 1];
 }
 
+export function watchPollIntervalSeconds(args: ReadonlyArray<string>): number | null {
+  const input = valueAfter(args, "--poll-interval");
+  if (input === undefined) {
+    return args.includes("--poll-interval") ? null : DEFAULT_WATCH_POLL_INTERVAL_SECONDS;
+  }
+  const seconds = Number(input);
+  return input.trim().length > 0 && Number.isFinite(seconds) && seconds >= 0 ? seconds : null;
+}
+
 const main = Effect.gen(function* () {
   const args = NodeProcess.argv.slice(2);
   const command = args[0];
   const root = args[1];
   const vaultId = valueAfter(args, "--vault-id");
+  const pollIntervalSeconds = watchPollIntervalSeconds(args);
   if (
     (command !== "push" && command !== "pull" && command !== "status" && command !== "watch") ||
     root === undefined ||
-    vaultId === undefined
+    vaultId === undefined ||
+    (command === "watch" && pollIntervalSeconds === null)
   ) {
     return yield* new SyncCliUsageError();
   }
@@ -72,18 +86,33 @@ const main = Effect.gen(function* () {
   });
 
   if (command === "watch") {
-    yield* runVaultWatch(root, {
-      push: () =>
-        Effect.gen(function* () {
-          const version = yield* makeVersion();
-          const result = yield* pushVault({ root, vaultId, client, ...version });
-          return { revision: result.manifest.revision };
-        }),
-      pull: () =>
-        pullVault({ root, vaultId, client }).pipe(
-          Effect.map((result) => ({ revision: result.manifest.revision })),
-        ),
-    });
+    const watchPollIntervalSeconds = pollIntervalSeconds ?? DEFAULT_WATCH_POLL_INTERVAL_SECONDS;
+    yield* runVaultWatch(
+      root,
+      {
+        push: () =>
+          Effect.gen(function* () {
+            const version = yield* makeVersion();
+            const result = yield* pushVault({ root, vaultId, client, ...version });
+            return { revision: result.manifest.revision };
+          }),
+        pull: () =>
+          pullVault({ root, vaultId, client }).pipe(
+            Effect.map((result) => ({ revision: result.manifest.revision })),
+          ),
+      },
+      {
+        pollInterval: `${watchPollIntervalSeconds} seconds`,
+        revisions: {
+          remote: () =>
+            client
+              .getManifest(vaultId)
+              .pipe(Effect.map((remote) => remote?.manifest.revision ?? null)),
+          local: () =>
+            readSyncState(root).pipe(Effect.map((state) => state?.manifest.revision ?? null)),
+        },
+      },
+    );
     return;
   }
 
