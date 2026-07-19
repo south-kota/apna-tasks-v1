@@ -5,6 +5,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import {
+  compareVaultPaths,
   decodeManifestUnknown,
   mediaTypeForVaultPath,
   normalizeVaultPath,
@@ -141,7 +142,9 @@ export const scanVault = Effect.fn("scanVault")(function* (
     vaultId: options.vaultId,
     revision: options.revision,
     generatedAt: options.generatedAt,
-    files: yield* collectEntries(absoluteRoot, absoluteRoot, ignore),
+    files: (yield* collectEntries(absoluteRoot, absoluteRoot, ignore)).toSorted((left, right) =>
+      compareVaultPaths(left.path, right.path),
+    ),
   });
 });
 

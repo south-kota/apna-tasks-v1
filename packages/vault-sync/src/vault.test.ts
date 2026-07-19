@@ -4,7 +4,12 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { sha256Hex, VAULT_MANIFEST_SCHEMA, type VaultManifest } from "./manifest.ts";
+import {
+  compareVaultPaths,
+  sha256Hex,
+  VAULT_MANIFEST_SCHEMA,
+  type VaultManifest,
+} from "./manifest.ts";
 import { updateSyncStatus } from "./syncStatus.ts";
 import { applyVaultManifest, scanVault, VaultObjectIntegrityError } from "./vault.ts";
 
@@ -26,7 +31,7 @@ const manifestFor = (
         objects.set(digest, bytes);
         return { path, sha256: digest, size: bytes.byteLength, mediaType };
       })
-      .toSorted((left, right) => left.path.localeCompare(right.path)),
+      .toSorted((left, right) => compareVaultPaths(left.path, right.path)),
   };
   return { manifest, objects };
 };
@@ -74,6 +79,32 @@ it.layer(NodeServices.layer)("vault filesystem sync", (it) => {
       assert.deepEqual(
         manifest.files.map((entry) => entry.path),
         ["Airbnb old/published/note.md", "nested/record.json", "note.md", "pixel.png"],
+      );
+    }),
+  );
+
+  it.effect("orders manifest paths by code unit when sibling names share a prefix", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* makeRoot;
+      // "Airbnb old/…" precedes "Airbnb/…" in code-unit order (space < "/"),
+      // while per-directory name sorting visits "Airbnb" first — the scan must
+      // still emit a manifest the sorted-paths schema filter accepts.
+      yield* fs.makeDirectory(path.join(root, "Airbnb"), { recursive: true });
+      yield* fs.makeDirectory(path.join(root, "Airbnb old"), { recursive: true });
+      yield* fs.writeFileString(path.join(root, "Airbnb", "a.md"), "a");
+      yield* fs.writeFileString(path.join(root, "Airbnb old", "b.md"), "b");
+
+      const manifest = yield* scanVault(root, {
+        vaultId: "test-vault",
+        revision: "revision-1",
+        generatedAt: "2026-07-18T00:00:00.000Z",
+      });
+
+      assert.deepEqual(
+        manifest.files.map((entry) => entry.path),
+        ["Airbnb old/b.md", "Airbnb/a.md"],
       );
     }),
   );

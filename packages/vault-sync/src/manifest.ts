@@ -98,13 +98,18 @@ export const VaultManifestEntry = Schema.Struct({
 );
 export type VaultManifestEntry = typeof VaultManifestEntry.Type;
 
+/** Deterministic, locale-independent path order shared by producers and validators. */
+export function compareVaultPaths(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 const sortedUniquePathsFilter = Schema.makeFilter(
   (files: ReadonlyArray<{ readonly path: string }>) => {
     for (let index = 1; index < files.length; index += 1) {
       const previous = files[index - 1];
       const current = files[index];
       if (previous === undefined || current === undefined) continue;
-      const order = previous.path.localeCompare(current.path);
+      const order = compareVaultPaths(previous.path, current.path);
       if (order === 0) return `Duplicate manifest path: ${current.path}`;
       if (order > 0) return "Manifest files must be sorted by path.";
     }
