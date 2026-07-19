@@ -1,5 +1,7 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -8,7 +10,8 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { ManifestPreconditionError, VaultCloudRequestError } from "./client.ts";
 import { RemoteManifestChangedError } from "./sync.ts";
-import { debounceWatchEvents, runWatchCycle } from "./watch.ts";
+import { readSyncStatus, type VaultSyncStatus } from "./syncStatus.ts";
+import { debounceWatchEvents, runVaultWatchBatches, runWatchCycle } from "./watch.ts";
 
 describe("vault watch", () => {
   it.effect("debounces rapid events into sorted unique batches after a quiet period", () =>
@@ -52,11 +55,15 @@ describe("vault watch", () => {
             calls.push("push");
             return { revision: "rev-1" };
           }),
-        pull: () => Effect.sync(() => calls.push("pull")),
+        pull: () =>
+          Effect.sync(() => {
+            calls.push("pull");
+            return { revision: "pulled-1" };
+          }),
       });
 
       assert.deepEqual(calls, ["push"]);
-      assert.deepEqual(result, { revision: "rev-1", retried: false });
+      assert.deepEqual(result, { revision: "rev-1", retried: false, pulledRevision: null });
     }),
   );
 
@@ -73,11 +80,19 @@ describe("vault watch", () => {
               ? Effect.fail(new RemoteManifestChangedError({ vaultId: "test" }))
               : Effect.succeed({ revision: "rev-2" });
           }),
-        pull: () => Effect.sync(() => calls.push("pull")),
+        pull: () =>
+          Effect.sync(() => {
+            calls.push("pull");
+            return { revision: "remote-2" };
+          }),
       });
 
       assert.deepEqual(calls, ["push", "pull", "push"]);
-      assert.deepEqual(result, { revision: "rev-2", retried: true });
+      assert.deepEqual(result, {
+        revision: "rev-2",
+        retried: true,
+        pulledRevision: "remote-2",
+      });
     }),
   );
 
@@ -89,7 +104,11 @@ describe("vault watch", () => {
           calls.push("push");
           return Effect.fail(new ManifestPreconditionError({ vaultId: "test" }));
         },
-        pull: () => Effect.sync(() => calls.push("pull")),
+        pull: () =>
+          Effect.sync(() => {
+            calls.push("pull");
+            return { revision: "remote-2" };
+          }),
       }).pipe(Effect.flip);
 
       assert.deepEqual(calls, ["push", "pull", "push"]);
@@ -105,11 +124,83 @@ describe("vault watch", () => {
           calls.push("push");
           return Effect.fail(new VaultCloudRequestError({ operation: "upload object" }));
         },
-        pull: () => Effect.sync(() => calls.push("pull")),
+        pull: () =>
+          Effect.sync(() => {
+            calls.push("pull");
+            return { revision: "remote-2" };
+          }),
       }).pipe(Effect.flip);
 
       assert.deepEqual(calls, ["push"]);
       assert.instanceOf(failure, VaultCloudRequestError);
+    }),
+  );
+});
+
+it.layer(NodeServices.layer)("vault watch status lifecycle", (it) => {
+  it.effect("records the pulled and pushed revisions after a stale-remote retry", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "vault-watch-retry-" });
+      const calls: Array<string> = [];
+      let pushes = 0;
+
+      yield* runVaultWatchBatches(root, Stream.fromIterable([["note.md"]]), {
+        push: () => {
+          calls.push("push");
+          pushes += 1;
+          return pushes === 1
+            ? Effect.fail(new RemoteManifestChangedError({ vaultId: "test" }))
+            : Effect.succeed({ revision: "local-3" });
+        },
+        pull: () => {
+          calls.push("pull");
+          return Effect.succeed({ revision: "remote-2" });
+        },
+      });
+
+      assert.deepEqual(calls, ["push", "pull", "push"]);
+      const status = yield* readSyncStatus(root);
+      assert.equal(status?.state, "clean");
+      assert.equal(status?.lastPulledRevision, "remote-2");
+      assert.equal(status?.lastPushedRevision, "local-3");
+    }),
+  );
+
+  it.effect("records a failed cycle and continues to the next batch", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "vault-watch-status-" });
+      let pushes = 0;
+      let failedStatus: VaultSyncStatus | null = null;
+      const batches = Stream.fromIterable<ReadonlyArray<string>>([["first.md"]]).pipe(
+        Stream.concat(
+          Stream.fromEffect(
+            Effect.gen(function* () {
+              failedStatus = yield* readSyncStatus(root);
+              return ["second.md"];
+            }),
+          ),
+        ),
+      );
+
+      yield* runVaultWatchBatches(root, batches, {
+        push: () => {
+          pushes += 1;
+          return pushes === 1
+            ? Effect.fail(new VaultCloudRequestError({ operation: "upload object" }))
+            : Effect.succeed({ revision: "revision-2" });
+        },
+        pull: () => Effect.succeed({ revision: "remote-1" }),
+      });
+
+      assert.equal(pushes, 2);
+      const capturedStatus = failedStatus as VaultSyncStatus | null;
+      assert.equal(capturedStatus?.state, "error");
+      assert.include(capturedStatus?.lastError ?? "", "upload object");
+      const finalStatus = yield* readSyncStatus(root);
+      assert.equal(finalStatus?.state, "clean");
+      assert.equal(finalStatus?.lastPushedRevision, "revision-2");
     }),
   );
 });

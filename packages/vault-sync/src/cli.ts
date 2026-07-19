@@ -4,6 +4,7 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeProcess from "node:process";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Crypto from "effect/Crypto";
@@ -17,6 +18,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 
 import { makeVaultCloudClient } from "./client.ts";
 import { pullVault, pushVault, statusVault } from "./sync.ts";
+import { isSyncStatusStale, syncErrorMessage, updateSyncStatus } from "./syncStatus.ts";
 import { runVaultWatch } from "./watch.ts";
 
 export class SyncCliUsageError extends Schema.TaggedErrorClass<SyncCliUsageError>()(
@@ -77,7 +79,10 @@ const main = Effect.gen(function* () {
           const result = yield* pushVault({ root, vaultId, client, ...version });
           return { revision: result.manifest.revision };
         }),
-      pull: () => pullVault({ root, vaultId, client }).pipe(Effect.asVoid),
+      pull: () =>
+        pullVault({ root, vaultId, client }).pipe(
+          Effect.map((result) => ({ revision: result.manifest.revision })),
+        ),
     });
     return;
   }
@@ -85,6 +90,7 @@ const main = Effect.gen(function* () {
   const { revision, generatedAt } = yield* makeVersion();
 
   if (command === "push") {
+    yield* updateSyncStatus(root, { state: "pushing" });
     const result = yield* pushVault({
       root,
       vaultId,
@@ -92,6 +98,21 @@ const main = Effect.gen(function* () {
       revision,
       generatedAt,
       force: args.includes("--force"),
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.gen(function* () {
+          yield* updateSyncStatus(root, {
+            state: "error",
+            lastError: syncErrorMessage(Cause.squash(cause)),
+          });
+          return yield* Effect.failCause(cause);
+        }),
+      ),
+    );
+    yield* updateSyncStatus(root, {
+      state: "clean",
+      lastPushedRevision: result.manifest.revision,
+      successful: true,
     });
     yield* Console.log(
       `Pushed ${result.manifest.files.length} files (${result.uploaded} new objects), manifest ${result.etag}.`,
@@ -101,6 +122,19 @@ const main = Effect.gen(function* () {
 
   if (command === "status") {
     const status = yield* statusVault({ root, vaultId, client, revision, generatedAt });
+    if (status.syncStatus === null) {
+      yield* Console.log("Sync lifecycle status is unavailable.");
+    } else {
+      const lifecycle = status.syncStatus;
+      const stale = isSyncStatusStale(lifecycle, yield* Clock.currentTimeMillis) ? ", stale" : "";
+      yield* Console.log(
+        `Sync lifecycle ${lifecycle.state}${stale}; updated ${lifecycle.updatedAt}.`,
+      );
+      if (lifecycle.pendingPaths.length > 0) {
+        yield* Console.log(`  pending     ${lifecycle.pendingPaths.join(", ")}`);
+      }
+      if (lifecycle.lastError !== null) yield* Console.log(`  last-error  ${lifecycle.lastError}`);
+    }
     if (status.remote === null) {
       yield* Console.log("Remote vault does not exist yet. Run push to create it.");
     } else {
@@ -113,11 +147,34 @@ const main = Effect.gen(function* () {
     return;
   }
 
+  yield* updateSyncStatus(root, { state: "pulling" });
   const pulled = yield* pullVault({
     root,
     vaultId,
     client,
     prune: !args.includes("--no-prune"),
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.gen(function* () {
+        yield* updateSyncStatus(root, {
+          state: "error",
+          lastError: syncErrorMessage(Cause.squash(cause)),
+        });
+        return yield* Effect.failCause(cause);
+      }),
+    ),
+  );
+  const liveStatus = yield* statusVault({ root, vaultId, client, revision, generatedAt });
+  const pendingPaths = [
+    ...liveStatus.localOnly,
+    ...liveStatus.remoteOnly,
+    ...liveStatus.modified,
+  ].toSorted();
+  yield* updateSyncStatus(root, {
+    state: liveStatus.inSync ? "clean" : "pending",
+    pendingPaths,
+    lastPulledRevision: pulled.manifest.revision,
+    successful: liveStatus.inSync,
   });
   const { result } = pulled;
   yield* Console.log(

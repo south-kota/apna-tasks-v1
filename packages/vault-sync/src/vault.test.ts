@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 import { sha256Hex, VAULT_MANIFEST_SCHEMA, type VaultManifest } from "./manifest.ts";
+import { updateSyncStatus } from "./syncStatus.ts";
 import { applyVaultManifest, scanVault, VaultObjectIntegrityError } from "./vault.ts";
 
 const encoder = new TextEncoder();
@@ -51,6 +52,7 @@ it.layer(NodeServices.layer)("vault filesystem sync", (it) => {
         yield* fs.makeDirectory(path.join(root, ignored), { recursive: true });
         yield* fs.writeFileString(path.join(root, ignored, "hidden.md"), "ignored");
       }
+      yield* updateSyncStatus(root, { state: "pending", pendingPaths: ["note.md"] });
 
       const manifest = yield* scanVault(root, {
         vaultId: "test-vault",

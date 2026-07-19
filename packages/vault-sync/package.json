@@ -22,6 +22,10 @@
       "types": "./src/syncState.ts",
       "import": "./src/syncState.ts"
     },
+    "./syncStatus": {
+      "types": "./src/syncStatus.ts",
+      "import": "./src/syncStatus.ts"
+    },
     "./vault": {
       "types": "./src/vault.ts",
       "import": "./src/vault.ts"
