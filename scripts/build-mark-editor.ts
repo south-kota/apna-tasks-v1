@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 
-// Builds @mark/editor (a sibling repository on this machine; see the
-// apps/web `file:` dependency) into a consumable package directory:
+// Regenerates the committed @mark/editor package in the sibling Mark repo:
 // compiled JS + .d.ts + styles + a generated package.json under
-// <editor-dir>/dist. The Mark repo gitignores dist/, so this only produces
-// untracked build output there — no committed Mark state is touched.
+// <editor-dir>/dist.
 //
-// Rerun after pulling changes in the Mark repo, then `vp install` here to
-// refresh pnpm's hard-linked copy of the file: dependency.
+// Staleness workflow: edit Mark, run `node scripts/build-mark-editor.ts`,
+// commit and push Mark's dist, bump the pinned commit in apps/web/package.json,
+// then run `vp install` here to refresh the Git dependency.
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";

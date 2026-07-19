@@ -573,8 +573,8 @@ importers:
         specifier: ^0.41.0
         version: 0.41.0(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(yjs@13.6.31)
       '@mark/editor':
-        specifier: file:/Users/kota/Documents/Life/Mark/packages/editor/dist
-        version: file:../../../Documents/Life/Mark/packages/editor/dist(@codemirror/lang-css@6.3.1)(@codemirror/lang-html@6.4.11)(@codemirror/lang-javascript@6.2.5)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+        specifier: git+https://github.com/south-kota/Mark.git#de0441361c0e285502f18215186018a476f28373&path:packages/editor/dist
+        version: git+https://github.com/south-kota/Mark.git#de0441361c0e285502f18215186018a476f28373&path:packages/editor/dist(@codemirror/lang-css@6.3.1)(@codemirror/lang-html@6.4.11)(@codemirror/lang-javascript@6.2.5)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@pierre/diffs':
         specifier: 'catalog:'
         version: 1.3.0-beta.5(patch_hash=7cb6da88544119adda056b2f46f43956f99326227732da0b345081e285a6c53a)(@shikijs/themes@4.3.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
@@ -3306,8 +3306,9 @@ packages:
   '@marijn/find-cluster-break@1.0.3':
     resolution: {integrity: sha512-FY+MKLBoTsLNJF/eLWaOsXGdz6uh3Iu1axjPf6TUq92IYumcTcXWHoS747JARLkcdlJ/Waiaxc5wQfFO8jC6NA==}
 
-  '@mark/editor@file:../../../Documents/Life/Mark/packages/editor/dist':
-    resolution: {directory: ../../../Documents/Life/Mark/packages/editor/dist, type: directory}
+  '@mark/editor@git+https://github.com/south-kota/Mark.git#de0441361c0e285502f18215186018a476f28373&path:packages/editor/dist':
+    resolution: {commit: de0441361c0e285502f18215186018a476f28373, path: packages/editor/dist, repo: https://github.com/south-kota/Mark.git, type: git}
+    version: 0.0.1
     peerDependencies:
       react: ^19.0.0
       react-dom: ^19.0.0
@@ -13510,7 +13511,7 @@ snapshots:
 
   '@marijn/find-cluster-break@1.0.3': {}
 
-  '@mark/editor@file:../../../Documents/Life/Mark/packages/editor/dist(@codemirror/lang-css@6.3.1)(@codemirror/lang-html@6.4.11)(@codemirror/lang-javascript@6.2.5)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
+  '@mark/editor@git+https://github.com/south-kota/Mark.git#de0441361c0e285502f18215186018a476f28373&path:packages/editor/dist(@codemirror/lang-css@6.3.1)(@codemirror/lang-html@6.4.11)(@codemirror/lang-javascript@6.2.5)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
     dependencies:
       '@atomic-editor/editor': 0.6.2(@codemirror/autocomplete@6.20.3)(@codemirror/commands@6.10.4)(@codemirror/lang-css@6.3.1)(@codemirror/lang-html@6.4.11)(@codemirror/lang-javascript@6.2.5)(@codemirror/lang-markdown@6.5.1)(@codemirror/language@6.12.4)(@codemirror/search@6.7.1)(@codemirror/state@6.7.1)(@codemirror/view@6.43.6)(@lezer/common@1.5.2)(@lezer/highlight@1.2.3)(@lezer/markdown@1.7.2)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@codemirror/autocomplete': 6.20.3
