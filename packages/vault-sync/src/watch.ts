@@ -14,7 +14,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { ManifestPreconditionError } from "./client.ts";
-import { RemoteManifestChangedError } from "./sync.ts";
+import { localDirtyPaths, RemoteManifestChangedError } from "./sync.ts";
 import { syncErrorMessage, updateSyncStatus } from "./syncStatus.ts";
 import { isIgnoredVaultPath, loadVaultIgnore } from "./vaultIgnore.ts";
 
@@ -302,6 +302,28 @@ export function runVaultWatchBatches<
           Effect.forkScoped,
         );
       }
+
+      // Flush edits made while nothing was watching: the reconcile above only
+      // pulls, and FS events that happened while the daemon was down are gone,
+      // so local-dirty state would otherwise sit unpushed until the next live
+      // edit. Runs after the poller is armed (the lock serializes them) so the
+      // dirty scan's FS work never delays poll scheduling. Failures are logged,
+      // never fatal — the FS watcher still runs.
+      yield* localDirtyPaths(root).pipe(
+        Effect.flatMap((dirty) =>
+          dirty.length === 0
+            ? Effect.void
+            : Console.log(`Flushing ${dirty.length} offline changes.`).pipe(
+                Effect.andThen(runWatchBatch(root, dirty, operations)),
+              ),
+        ),
+        Effect.catchCause((cause) => {
+          if (Cause.hasInterrupts(cause)) return Effect.interrupt;
+          return Console.error(
+            `Startup dirty scan failed: ${syncErrorMessage(Cause.squash(cause))}`,
+          );
+        }),
+      );
 
       yield* batches.pipe(
         Stream.runForEach((paths) =>

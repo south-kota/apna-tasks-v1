@@ -12,7 +12,10 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { ManifestPreconditionError, VaultCloudRequestError } from "./client.ts";
 import { RemoteManifestChangedError } from "./sync.ts";
+import { SYNC_STATE_SCHEMA, writeSyncState } from "./syncState.ts";
 import { readSyncStatus, type VaultSyncStatus } from "./syncStatus.ts";
+import { scanVault } from "./vault.ts";
+import { loadVaultIgnore } from "./vaultIgnore.ts";
 import { debounceWatchEvents, runVaultWatchBatches, runWatchCycle } from "./watch.ts";
 
 describe("vault watch", () => {
@@ -301,6 +304,81 @@ it.layer(NodeServices.layer)("vault watch status lifecycle", (it) => {
       );
 
       assert.deepEqual(calls, ["remote", "local", "pull", "push"]);
+    }),
+  );
+
+  it.effect("flushes offline local changes at startup before any events", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "vault-watch-offline-" });
+      // No sync state exists, so this file is offline backlog from before the
+      // daemon started — no FS event will ever fire for it.
+      yield* fs.writeFileString(path.join(root, "offline.md"), "edited while down\n");
+
+      const calls: Array<string> = [];
+      yield* runVaultWatchBatches(
+        root,
+        Stream.fromIterable<ReadonlyArray<string>>([]),
+        {
+          push: () =>
+            Effect.sync(() => {
+              calls.push("push");
+              return { revision: "flushed-1" };
+            }),
+          pull: () => Effect.succeed({ revision: "unexpected" }),
+        },
+        {
+          pollInterval: 0,
+          revisions: {
+            remote: () => Effect.succeed(null),
+            local: () => Effect.succeed(null),
+          },
+        },
+      );
+
+      assert.deepEqual(calls, ["push"]);
+      const status = yield* readSyncStatus(root);
+      assert.equal(status?.state, "clean");
+      assert.equal(status?.lastPushedRevision, "flushed-1");
+    }),
+  );
+
+  it.effect("skips the startup flush when the tree matches sync state", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "vault-watch-clean-" });
+      yield* fs.writeFileString(path.join(root, "synced.md"), "already pushed\n");
+      const manifest = yield* scanVault(
+        root,
+        { vaultId: "clean-vault", revision: "rev-1", generatedAt: "2026-07-22T00:00:00.000Z" },
+        yield* loadVaultIgnore(root),
+      );
+      yield* writeSyncState(root, { schema: SYNC_STATE_SCHEMA, etag: "etag-1", manifest });
+
+      const calls: Array<string> = [];
+      yield* runVaultWatchBatches(
+        root,
+        Stream.fromIterable<ReadonlyArray<string>>([]),
+        {
+          push: () =>
+            Effect.sync(() => {
+              calls.push("push");
+              return { revision: "unexpected" };
+            }),
+          pull: () => Effect.succeed({ revision: "unexpected" }),
+        },
+        {
+          pollInterval: 0,
+          revisions: {
+            remote: () => Effect.succeed("rev-1"),
+            local: () => Effect.succeed("rev-1"),
+          },
+        },
+      );
+
+      assert.deepEqual(calls, []);
     }),
   );
 

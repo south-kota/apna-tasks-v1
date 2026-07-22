@@ -7,15 +7,26 @@ import * as Path from "effect/Path";
 import type { VaultCloudClient, RemoteManifest } from "./client.ts";
 import { ManifestPreconditionError, VaultCloudRequestError } from "./client.ts";
 import { sha256Hex, type VaultManifest } from "./manifest.ts";
-import { pullVault, pushVault, RemoteManifestChangedError, statusVault } from "./sync.ts";
+import {
+  localDirtyPaths,
+  pullVault,
+  pushVault,
+  RemoteManifestChangedError,
+  statusVault,
+} from "./sync.ts";
 
 const encoder = new TextEncoder();
 
 /** In-memory cloud with the same compare-and-set manifest semantics as the API. */
-function makeFakeCloud(): { client: VaultCloudClient; objects: Map<string, Uint8Array> } {
+function makeFakeCloud(): {
+  client: VaultCloudClient;
+  objects: Map<string, Uint8Array>;
+  existenceProbes: () => number;
+} {
   const objects = new Map<string, Uint8Array>();
   let current: RemoteManifest | null = null;
   let counter = 0;
+  let probes = 0;
   const client: VaultCloudClient = {
     getManifest: () => Effect.sync(() => current),
     putManifest: (manifest: VaultManifest, expectedEtag: string | null) =>
@@ -29,7 +40,11 @@ function makeFakeCloud(): { client: VaultCloudClient; objects: Map<string, Uint8
         current = { manifest, etag };
         return Effect.succeed(etag);
       }),
-    objectExists: (_vaultId, digest) => Effect.sync(() => objects.has(digest)),
+    objectExists: (_vaultId, digest) =>
+      Effect.sync(() => {
+        probes += 1;
+        return objects.has(digest);
+      }),
     uploadObject: (_vaultId, digest, bytes) =>
       Effect.sync(() => {
         objects.set(digest, bytes);
@@ -42,7 +57,7 @@ function makeFakeCloud(): { client: VaultCloudClient; objects: Map<string, Uint8
           : Effect.succeed(bytes);
       }),
   };
-  return { client, objects };
+  return { client, objects, existenceProbes: () => probes };
 }
 
 it.layer(NodeServices.layer)("push/pull sync", (it) => {
@@ -102,6 +117,65 @@ it.layer(NodeServices.layer)("push/pull sync", (it) => {
       assert.equal(first.uploaded, 1);
       assert.equal(second.uploaded, 0);
       assert.equal(second.etag, first.etag);
+    }),
+  );
+
+  it.effect("probes only new content on incremental pushes", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { client, existenceProbes } = makeFakeCloud();
+      const source = yield* makeRoot("vault-sync-incr-");
+      yield* fs.writeFileString(path.join(source, "a.md"), "alpha\n");
+      yield* fs.writeFileString(path.join(source, "b.md"), "beta\n");
+      yield* fs.writeFileString(path.join(source, "c.md"), "gamma\n");
+
+      // Bootstrap push: no remote manifest yet, so every file is probed once.
+      yield* pushVault(syncOptions(source, client, "rev-1"));
+      const bootstrapProbes = existenceProbes();
+      assert.equal(bootstrapProbes, 3);
+
+      // One modified file: only its new digest is probed; unchanged files are
+      // covered by the remote manifest and cost no requests.
+      yield* fs.writeFileString(path.join(source, "a.md"), "alpha v2\n");
+      const second = yield* pushVault(syncOptions(source, client, "rev-2"));
+      assert.equal(second.uploaded, 1);
+      assert.equal(existenceProbes() - bootstrapProbes, 1);
+
+      // Two new files with identical content: one probe, one upload.
+      yield* fs.writeFileString(path.join(source, "d.md"), "same body\n");
+      yield* fs.writeFileString(path.join(source, "e.md"), "same body\n");
+      const probesBeforeThird = existenceProbes();
+      const third = yield* pushVault(syncOptions(source, client, "rev-3"));
+      assert.equal(third.uploaded, 1);
+      assert.equal(existenceProbes() - probesBeforeThird, 1);
+    }),
+  );
+
+  it.effect("localDirtyPaths reports the offline backlog against sync state", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { client } = makeFakeCloud();
+      const source = yield* makeRoot("vault-sync-dirty-");
+      yield* fs.writeFileString(path.join(source, "keep.md"), "kept\n");
+      yield* fs.writeFileString(path.join(source, "edit.md"), "original\n");
+      yield* fs.writeFileString(path.join(source, "gone.md"), "doomed\n");
+
+      // Before any sync the whole tree is backlog.
+      assert.deepEqual(yield* localDirtyPaths(source), ["edit.md", "gone.md", "keep.md"]);
+
+      yield* pushVault(syncOptions(source, client, "rev-1"));
+      assert.deepEqual(yield* localDirtyPaths(source), []);
+
+      // Offline edits: modify one, add one, delete one.
+      yield* fs.writeFileString(path.join(source, "edit.md"), "changed\n");
+      yield* fs.writeFileString(path.join(source, "new.md"), "brand new\n");
+      yield* fs.remove(path.join(source, "gone.md"));
+      assert.deepEqual(yield* localDirtyPaths(source), ["edit.md", "gone.md", "new.md"]);
+
+      yield* pushVault(syncOptions(source, client, "rev-2"));
+      assert.deepEqual(yield* localDirtyPaths(source), []);
     }),
   );
 

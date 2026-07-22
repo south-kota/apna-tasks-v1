@@ -69,10 +69,19 @@ export const pushVault = Effect.fn("pushVault")(function* (options: PushVaultOpt
   const expectedEtag = remote === null ? null : options.force === true ? remote.etag : lastSeenEtag;
 
   let uploaded = 0;
+  // Objects referenced by the remote manifest necessarily exist in the store,
+  // so only genuinely new content needs an existence probe. This keeps a push
+  // at O(changed files) requests instead of probing the whole vault.
+  const knownDigests = new Set((remote?.manifest.files ?? []).map((entry) => entry.sha256));
   for (const entry of manifest.files) {
-    if (yield* options.client.objectExists(options.vaultId, entry.sha256)) continue;
+    if (knownDigests.has(entry.sha256)) continue;
+    if (yield* options.client.objectExists(options.vaultId, entry.sha256)) {
+      knownDigests.add(entry.sha256);
+      continue;
+    }
     const bytes = yield* fs.readFile(path.join(options.root, ...entry.path.split("/")));
     yield* options.client.uploadObject(options.vaultId, entry.sha256, bytes, entry.mediaType);
+    knownDigests.add(entry.sha256);
     uploaded += 1;
   }
 
@@ -106,6 +115,35 @@ export const pullVault = Effect.fn("pullVault")(function* (options: PullVaultOpt
     manifest: remote.manifest,
   });
   return { manifest: remote.manifest, etag: remote.etag, result };
+});
+
+/**
+ * Paths that differ between the working tree and the last-synced state — the
+ * offline backlog a watch daemon must flush at startup, since FS events for
+ * these changes (if any ever fired) happened while nothing was watching.
+ * Compares against local sync state only; no network. New files, modified
+ * files, and locally deleted files all count. A vault with no sync state is
+ * entirely dirty (first daemon run on an existing tree).
+ */
+export const localDirtyPaths = Effect.fn("localDirtyPaths")(function* (root: string) {
+  const ignore = yield* loadVaultIgnore(root);
+  const state = yield* readSyncState(root);
+  const local = yield* scanVault(
+    root,
+    { vaultId: "dirty-scan", revision: "dirty-scan", generatedAt: "1970-01-01T00:00:00.000Z" },
+    ignore,
+  );
+  const baseFiles = new Map(baseFilesFromState(state));
+  const dirty: Array<string> = [];
+  for (const entry of local.files) {
+    const baseDigest = baseFiles.get(entry.path);
+    if (baseDigest !== entry.sha256) dirty.push(entry.path);
+    baseFiles.delete(entry.path);
+  }
+  for (const deletedPath of baseFiles.keys()) {
+    dirty.push(deletedPath);
+  }
+  return dirty.toSorted();
 });
 
 export interface VaultStatus {
