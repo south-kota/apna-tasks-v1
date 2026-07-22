@@ -97,6 +97,53 @@ const WSL_SERVER_SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bi
 const backendChildEnvPatch = (): Record<string, string | undefined> =>
   Object.fromEntries(DESKTOP_BACKEND_ENV_NAMES.map((name) => [name, undefined]));
 
+// Vault-sync configuration for the bundled server's supervised replica
+// (apps/server reads APNA_VAULT_ROOT/ID/URL/TOKEN and only then starts the
+// watch). Finder launches the packaged app with no shell env, so the values
+// live in ~/.apnatasks/vault.env (KEY=VALUE lines, # comments). Packaged-only
+// by decision (Kota, 2026-07-22): vault sync runs exactly while the installed
+// app runs, and a dev backend never double-watches the real vault beside it.
+const VAULT_SYNC_ENV_PREFIX = "APNA_VAULT_";
+
+export const parseVaultSyncEnv = (raw: string): Record<string, string> =>
+  Object.fromEntries(
+    raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith("#"))
+      .flatMap((line) => {
+        const separator = line.indexOf("=");
+        if (separator === -1) return [];
+        const key = line.slice(0, separator).trim();
+        const value = line.slice(separator + 1).trim();
+        return key.startsWith(VAULT_SYNC_ENV_PREFIX) && value.length > 0 ? [[key, value]] : [];
+      }),
+  );
+
+const readVaultSyncEnv = Effect.gen(function* () {
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  if (!environment.isPackaged) return {};
+  const fileSystem = yield* FileSystem.FileSystem;
+  const envPath = `${environment.homeDirectory}/.apnatasks/vault.env`;
+  const raw = yield* fileSystem.readFileString(envPath).pipe(
+    Effect.map(Option.some),
+    Effect.catchTag("PlatformError", (cause) =>
+      cause.reason._tag === "NotFound"
+        ? Effect.succeedNone
+        : Effect.logWarning(
+            "Failed to read vault sync env; backend starts without vault sync",
+          ).pipe(
+            Effect.annotateLogs({ component: "desktop-backend-configuration", envPath, cause }),
+            Effect.as(Option.none()),
+          ),
+    ),
+  );
+  return Option.match(raw, {
+    onNone: () => ({}),
+    onSome: parseVaultSyncEnv,
+  });
+});
+
 const getWslEnvEntryName = (entry: string): string => {
   const slashIndex = entry.indexOf("/");
   return slashIndex === -1 ? entry : entry.slice(0, slashIndex);
@@ -330,11 +377,14 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
   ): Effect.fn.Return<
     DesktopBackendManager.DesktopBackendStartConfig,
     never,
-    DesktopEnvironment.DesktopEnvironment | DesktopServerExposure.DesktopServerExposure
+    | DesktopEnvironment.DesktopEnvironment
+    | DesktopServerExposure.DesktopServerExposure
+    | FileSystem.FileSystem
   > {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
     const backendExposure = yield* serverExposure.backendConfig;
+    const vaultSyncEnv = yield* readVaultSyncEnv;
 
     const bootstrap = {
       mode: "desktop" as const,
@@ -355,6 +405,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       cwd: environment.backendCwd,
       env: {
         ...backendChildEnvPatch(),
+        ...vaultSyncEnv,
         ELECTRON_RUN_AS_NODE: "1",
       },
       // Primary wants process.env (PATH, dev-runner's T3CODE_HOME, etc.).
@@ -624,6 +675,7 @@ export const make = Effect.gen(function* () {
     return yield* resolvePrimaryStartConfig(shared).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopServerExposure.DesktopServerExposure, serverExposure),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
     );
   });
 

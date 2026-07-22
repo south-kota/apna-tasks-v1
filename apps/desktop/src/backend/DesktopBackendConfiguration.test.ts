@@ -351,6 +351,81 @@ describe("DesktopBackendConfiguration", () => {
     ),
   );
 
+  it.effect("resolvePrimary injects APNA_VAULT_* env from ~/.apnatasks/vault.env", () =>
+    withHarness(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+
+        const vaultEnvDir = environment.path.join(environment.homeDirectory, ".apnatasks");
+        yield* fileSystem.makeDirectory(vaultEnvDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          environment.path.join(vaultEnvDir, "vault.env"),
+          [
+            "# vault sync",
+            "APNA_VAULT_ROOT=/vault/root",
+            "APNA_VAULT_ID=life",
+            "APNA_VAULT_URL=https://vault.example",
+            "APNA_VAULT_TOKEN= secret ",
+            "APNA_VAULT_EMPTY=",
+            "OTHER_KEY=nope",
+            "not a key value line",
+          ].join("\n"),
+        );
+
+        const config = yield* configuration.resolvePrimary;
+        assert.equal(config.env.APNA_VAULT_ROOT, "/vault/root");
+        assert.equal(config.env.APNA_VAULT_ID, "life");
+        assert.equal(config.env.APNA_VAULT_URL, "https://vault.example");
+        assert.equal(config.env.APNA_VAULT_TOKEN, "secret");
+        assert.notProperty(config.env, "APNA_VAULT_EMPTY");
+        assert.notProperty(config.env, "OTHER_KEY");
+      }),
+    ),
+  );
+
+  it.effect("resolvePrimary omits vault sync env when vault.env is missing", () =>
+    withHarness(
+      Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        const config = yield* configuration.resolvePrimary;
+        assert.notProperty(config.env, "APNA_VAULT_ROOT");
+      }),
+    ),
+  );
+
+  it.effect("resolvePrimary skips vault sync env when not packaged", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      const vaultEnvDir = path.join(baseDir, ".apnatasks");
+      yield* fileSystem.makeDirectory(vaultEnvDir, { recursive: true });
+      yield* fileSystem.writeFileString(
+        path.join(vaultEnvDir, "vault.env"),
+        "APNA_VAULT_ROOT=/vault/root",
+      );
+
+      yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        const config = yield* configuration.resolvePrimary;
+        assert.notProperty(config.env, "APNA_VAULT_ROOT");
+      }).pipe(
+        Effect.provide(
+          DesktopBackendConfiguration.layer.pipe(
+            Layer.provideMerge(serverExposureLayer),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(DesktopWslEnvironment.layerTest()),
+            Layer.provideMerge(makeEnvironmentLayer(baseDir, { isPackaged: false })),
+          ),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("logs structured context when persisted observability settings cannot be read", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
