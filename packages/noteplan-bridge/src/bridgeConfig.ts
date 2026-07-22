@@ -24,7 +24,7 @@ export class BridgeConfig extends Schema.Class<BridgeConfig>("BridgeConfig")({
   /** Master switch. The bridge refuses to write anything while false. */
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.sync(() => false))),
   vaultDir: Schema.String.pipe(
-    Schema.withDecodingDefault(Effect.sync(() => `${home()}/Documents/Life`)),
+    Schema.withDecodingDefault(Effect.sync(() => `${home()}/Documents/Apna Vault`)),
   ),
   notePlanDir: Schema.String.pipe(Schema.withDecodingDefault(Effect.sync(defaultNotePlanDir))),
   dailyFolder: Schema.String.pipe(Schema.withDecodingDefault(Effect.sync(() => "Daily"))),
@@ -67,7 +67,7 @@ export const sampleConfigJson = (): string =>
   `${JSON.stringify(
     {
       enabled: false,
-      vaultDir: `${home()}/Documents/Life`,
+      vaultDir: `${home()}/Documents/Apna Vault`,
       notePlanDir: defaultNotePlanDir(),
       dailyFolder: "Daily",
       notesFolder: "Apna",
