@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# apna — daily-driver helper for the Apna Tasks desktop app.
+#
+#   apna app update   rebuild the DMG from the working tree and reinstall into /Applications
+#   apna app run      launch the installed app (builds + installs first if missing)
+#   apna app build    build the DMG only, no install
+#   apna app install  install the last built DMG without rebuilding
+#
+# Installed builds are unsigned local builds (Tier 1): "update" is
+# rebuild-and-reinstall by design; there is no auto-updater.
+set -euo pipefail
+
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+if command -v readlink >/dev/null 2>&1; then
+  RESOLVED="$(readlink -f "$SCRIPT_PATH" 2>/dev/null || true)"
+  [ -n "$RESOLVED" ] && SCRIPT_PATH="$RESOLVED"
+fi
+REPO_ROOT="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
+RELEASE_DIR="$REPO_ROOT/release"
+
+find_built_zip() {
+  # Newest mac zip in release/ (the .app payload; the DMG is for manual installs)
+  ls -t "$RELEASE_DIR"/*-arm64.zip 2>/dev/null | head -1
+}
+
+extract_built_app() {
+  # Unpacks the newest zip and prints the path of the .app inside it
+  local built_zip="$1"
+  local extract_dir="$RELEASE_DIR/.apna-extract"
+  rm -rf "$extract_dir"
+  mkdir -p "$extract_dir"
+  ditto -xk "$built_zip" "$extract_dir" >&2
+  find "$extract_dir" -maxdepth 1 -name "*.app" -type d | head -1
+}
+
+build() {
+  echo "==> Building DMG (unsigned, arm64) from $REPO_ROOT"
+  (cd "$REPO_ROOT" && pnpm dist:desktop:dmg:arm64)
+}
+
+install_app() {
+  local built_zip built_app
+  built_zip="$(find_built_zip)"
+  if [ -z "$built_zip" ]; then
+    echo "error: no mac zip found under $RELEASE_DIR — build failed?" >&2
+    exit 1
+  fi
+  built_app="$(extract_built_app "$built_zip")"
+  if [ -z "$built_app" ]; then
+    echo "error: no .app inside $built_zip" >&2
+    exit 1
+  fi
+  local app_name dest
+  app_name="$(basename "$built_app" .app)"
+  dest="/Applications/$(basename "$built_app")"
+
+  # pgrep -f patterns are regexes; swap parens (as in "(Alpha)") for '.' wildcards
+  local match="${dest//[()]/.}/Contents/MacOS"
+  if pgrep -f "$match" >/dev/null 2>&1; then
+    echo "==> Quitting running instance of $app_name"
+    osascript -e "tell application \"$app_name\" to quit" 2>/dev/null || true
+    for _ in $(seq 1 20); do
+      pgrep -f "$match" >/dev/null 2>&1 || break
+      sleep 0.5
+    done
+    pgrep -f "$match" >/dev/null 2>&1 && pkill -f "$match" || true
+    sleep 1
+  fi
+
+  echo "==> Installing to $dest"
+  rm -rf "$dest"
+  ditto "$built_app" "$dest"
+  rm -rf "$RELEASE_DIR/.apna-extract"
+  xattr -dr com.apple.quarantine "$dest" 2>/dev/null || true
+  echo "==> Installed $(basename "$dest")"
+}
+
+installed_app() {
+  find /Applications -maxdepth 1 -name "Apna Tasks*.app" -type d 2>/dev/null | head -1
+}
+
+launch() {
+  local dest
+  dest="$(installed_app)"
+  if [ -z "$dest" ]; then
+    echo "==> No installed app found; building first"
+    build
+    install_app
+    dest="$(installed_app)"
+  fi
+  echo "==> Launching $(basename "$dest")"
+  open "$dest"
+}
+
+usage() {
+  sed -n '2,10p' "$SCRIPT_PATH" | sed 's/^# \{0,1\}//'
+}
+
+case "${1:-help}" in
+  app)
+    case "${2:-}" in
+      update) build; install_app; launch ;;
+      run) launch ;;
+      build) build ;;
+      install) install_app; launch ;;
+      *) usage; exit 1 ;;
+    esac
+    ;;
+  help|--help|-h) usage ;;
+  *) usage; exit 1 ;;
+esac

@@ -1389,7 +1389,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   const buildConfig: Record<string, unknown> = {
     appId: DESKTOP_APP_ID,
     productName: resolveDesktopProductName(version),
-    artifactName: "T3-Code-${version}-${arch}.${ext}",
+    artifactName: "Apna-Tasks-${version}-${arch}.${ext}",
     directories: {
       buildResources: "apps/desktop/resources",
     },
@@ -1587,8 +1587,14 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   const electronVersion = desktopPackageJson.dependencies.electron;
 
-  const serverDependencies = serverPackageJson.dependencies;
-  if (!serverDependencies || Object.keys(serverDependencies).length === 0) {
+  // Workspace packages (e.g. @t3tools/vault-sync) are inlined into the server
+  // dist bundle; the staged app installs from npm only.
+  const serverDependencies = Object.fromEntries(
+    Object.entries(serverPackageJson.dependencies ?? {}).filter(
+      ([, dependencySpec]) => !dependencySpec.startsWith("workspace:"),
+    ),
+  );
+  if (Object.keys(serverDependencies).length === 0) {
     return yield* new MissingServerProductionDependenciesError({
       manifestPath: "apps/server/package.json",
     });
