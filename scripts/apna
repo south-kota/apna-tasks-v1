@@ -3,6 +3,7 @@
 #
 #   apna app update   rebuild the DMG from the working tree and reinstall into /Applications
 #   apna app run      launch the installed app (builds + installs first if missing)
+#   apna app quit     quit the running app
 #   apna app build    build the DMG only, no install
 #   apna app install  install the last built DMG without rebuilding
 #
@@ -54,18 +55,7 @@ install_app() {
   app_name="$(basename "$built_app" .app)"
   dest="/Applications/$(basename "$built_app")"
 
-  # pgrep -f patterns are regexes; swap parens (as in "(Alpha)") for '.' wildcards
-  local match="${dest//[()]/.}/Contents/MacOS"
-  if pgrep -f "$match" >/dev/null 2>&1; then
-    echo "==> Quitting running instance of $app_name"
-    osascript -e "tell application \"$app_name\" to quit" 2>/dev/null || true
-    for _ in $(seq 1 20); do
-      pgrep -f "$match" >/dev/null 2>&1 || break
-      sleep 0.5
-    done
-    pgrep -f "$match" >/dev/null 2>&1 && pkill -f "$match" || true
-    sleep 1
-  fi
+  quit_app "$app_name" "$dest"
 
   echo "==> Installing to $dest"
   rm -rf "$dest"
@@ -77,6 +67,34 @@ install_app() {
 
 installed_app() {
   find /Applications -maxdepth 1 -name "Apna Tasks*.app" -type d 2>/dev/null | head -1
+}
+
+quit_app() {
+  local app_name="$1" app_path="$2"
+  # pgrep -f patterns are regexes; swap parens (as in "(Alpha)") for '.' wildcards
+  local match="${app_path//[()]/.}/Contents/MacOS"
+  if ! pgrep -f "$match" >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "==> Quitting running instance of $app_name"
+  osascript -e "tell application \"$app_name\" to quit" 2>/dev/null || true
+  for _ in $(seq 1 20); do
+    pgrep -f "$match" >/dev/null 2>&1 || break
+    sleep 0.5
+  done
+  pgrep -f "$match" >/dev/null 2>&1 && pkill -f "$match" || true
+  sleep 1
+}
+
+quit_installed() {
+  local dest
+  dest="$(installed_app)"
+  if [ -z "$dest" ]; then
+    echo "no installed app found" >&2
+    exit 1
+  fi
+  quit_app "$(basename "$dest" .app)" "$dest"
+  echo "==> Quit $(basename "$dest")"
 }
 
 launch() {
@@ -93,7 +111,7 @@ launch() {
 }
 
 usage() {
-  sed -n '2,10p' "$SCRIPT_PATH" | sed 's/^# \{0,1\}//'
+  sed -n '2,11p' "$SCRIPT_PATH" | sed 's/^# \{0,1\}//'
 }
 
 case "${1:-help}" in
@@ -101,6 +119,7 @@ case "${1:-help}" in
     case "${2:-}" in
       update) build; install_app; launch ;;
       run) launch ;;
+      quit) quit_installed ;;
       build) build ;;
       install) install_app; launch ;;
       *) usage; exit 1 ;;
