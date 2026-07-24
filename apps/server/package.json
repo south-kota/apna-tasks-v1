@@ -32,7 +32,8 @@
     "@pierre/diffs": "catalog:",
     "@t3tools/vault-sync": "workspace:*",
     "effect": "catalog:",
-    "node-pty": "^1.1.0"
+    "node-pty": "^1.1.0",
+    "yaml": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
