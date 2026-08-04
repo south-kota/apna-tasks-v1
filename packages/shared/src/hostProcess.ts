@@ -37,6 +37,13 @@ export const HostProcessPid = Context.Reference<number>(
   },
 );
 
+export const HostProcessWorkingDirectory = Context.Reference<string>(
+  "@t3tools/shared/hostProcess/HostProcessWorkingDirectory",
+  {
+    defaultValue: () => process.cwd(),
+  },
+);
+
 export const HostProcessExecutablePath = Context.Reference<string>(
   "@t3tools/shared/hostProcess/HostProcessExecutablePath",
   {

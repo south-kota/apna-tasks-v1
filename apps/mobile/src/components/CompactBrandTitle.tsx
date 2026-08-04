@@ -1,15 +1,42 @@
-import { View } from "react-native";
+import Constants from "expo-constants";
+import type {
+  NativeStackHeaderItem,
+  NativeStackNavigationOptions,
+} from "@react-navigation/native-stack";
+import { Platform, View } from "react-native";
 
 import { AppText as Text } from "./AppText";
+import { IPAD_HOME_TITLE_OFFSET } from "../lib/layoutMetrics";
+import { resolveMobileStageLabel } from "../lib/mobileBranding";
 import { useThemeColor } from "../lib/useThemeColor";
+import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../native/native-glass";
+
+// Native leading items inherit different UIKit margins than title views.
+const IOS_NATIVE_LEADING_TITLE_OFFSET = -6;
+const IPAD_NATIVE_LEADING_TITLE_OFFSET = 7;
 
 /**
  * Compact brand lockup sized for native navigation bars.
  */
-export function CompactBrandTitle() {
+export function CompactBrandTitle(
+  props: {
+    readonly nativeLeadingItem?: boolean;
+  } = {},
+) {
   const iconColor = useThemeColor("--color-icon");
   const mutedColor = useThemeColor("--color-foreground-muted");
   const subtleColor = useThemeColor("--color-subtle");
+  const stageLabel = resolveMobileStageLabel(Constants.expoConfig?.extra?.appVariant);
+  const titleOffset =
+    Platform.OS !== "ios"
+      ? 0
+      : props.nativeLeadingItem
+        ? Platform.isPad
+          ? IPAD_NATIVE_LEADING_TITLE_OFFSET
+          : IOS_NATIVE_LEADING_TITLE_OFFSET
+        : Platform.isPad
+          ? IPAD_HOME_TITLE_OFFSET
+          : 0;
 
   return (
     <View
@@ -17,7 +44,12 @@ export function CompactBrandTitle() {
       accessibilityLabel="Apna Tasks"
       accessible
       role="heading"
-      style={{ alignItems: "center", flexDirection: "row", gap: 6 }}
+      style={{
+        alignItems: "center",
+        flexDirection: "row",
+        gap: 6,
+        marginLeft: titleOffset,
+      }}
     >
       <Text
         style={{
@@ -56,7 +88,7 @@ export function CompactBrandTitle() {
             textTransform: "uppercase",
           }}
         >
-          Alpha
+          {stageLabel}
         </Text>
       </View>
     </View>
@@ -65,4 +97,33 @@ export function CompactBrandTitle() {
 
 export function renderCompactBrandTitle() {
   return <CompactBrandTitle />;
+}
+
+export function renderCompactBrandHeaderItems(): NativeStackHeaderItem[] {
+  return [
+    {
+      element: <CompactBrandTitle nativeLeadingItem />,
+      hidesSharedBackground: true,
+      type: "custom",
+    },
+  ];
+}
+
+export function getCompactBrandHeaderOptions(
+  fallbackTitleStyle?: NativeStackNavigationOptions["headerTitleStyle"],
+): NativeStackNavigationOptions {
+  if (Platform.OS === "ios" && NATIVE_LIQUID_GLASS_SUPPORTED) {
+    return {
+      headerTitle: "Apna Tasks",
+      headerTitleStyle: { color: "transparent", fontSize: 18, fontWeight: "800" },
+      title: "Apna Tasks",
+      unstable_headerLeftItems: renderCompactBrandHeaderItems,
+    };
+  }
+
+  return {
+    headerTitle: renderCompactBrandTitle,
+    headerTitleStyle: fallbackTitleStyle,
+    title: "Apna Tasks",
+  };
 }

@@ -22,7 +22,7 @@ if (
     !IOS_BUNDLE_IDENTIFIER_PATTERN.test(personalTeamBundleIdentifier))
 ) {
   throw new Error(
-    "T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID must be a reverse-DNS identifier such as com.example.t3code when T3CODE_IOS_PERSONAL_TEAM=1.",
+    "T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID must be a reverse-DNS identifier such as com.example.apnatasks when T3CODE_IOS_PERSONAL_TEAM=1.",
   );
 }
 
@@ -161,7 +161,7 @@ const config: ExpoConfig = {
   slug: "t3-code",
   platforms: ["ios", "android"],
   scheme: variant.scheme,
-  version: "0.1.0",
+  version: "1.0.1",
   runtimeVersion: {
     // Fingerprint (not appVersion) so an OTA only reaches binaries whose native
     // project — native deps, config plugins, AND patches/ — matches the update.
@@ -181,6 +181,9 @@ const config: ExpoConfig = {
   ios: {
     icon: variant.assets.iosIcon,
     supportsTablet: true,
+    // Multitasking-capable iPad apps cannot rotate programmatically, so the
+    // showcase capture build requires full screen (see infoPlist below).
+    requireFullScreen: process.env.T3_SHOWCASE_CAPTURE_BUILD === "1",
     bundleIdentifier: iosBundleIdentifier,
     // Pin code signing to the T3 Tools team so non-interactive `expo run:ios`
     // does not fall back to a personal team (which cannot sign app groups,
@@ -197,6 +200,21 @@ const config: ExpoConfig = {
       NSLocalNetworkUsageDescription:
         "Allow Apna Tasks to connect to Apna Tasks servers on your local network or tailnet.",
       ITSAppUsesNonExemptEncryption: false,
+      // The App Store screenshot harness rotates the iPad interface from
+      // inside the app (CI denies osascript the Accessibility access that
+      // Simulator menu scripting needs), and iPadOS ignores programmatic
+      // orientation requests for multitasking-capable apps — so the capture
+      // build opts out of multitasking and declares landscape support.
+      ...(process.env.T3_SHOWCASE_CAPTURE_BUILD === "1"
+        ? {
+            "UISupportedInterfaceOrientations~ipad": [
+              "UIInterfaceOrientationPortrait",
+              "UIInterfaceOrientationPortraitUpsideDown",
+              "UIInterfaceOrientationLandscapeLeft",
+              "UIInterfaceOrientationLandscapeRight",
+            ],
+          }
+        : {}),
     },
   },
   android: {
@@ -276,12 +294,14 @@ const config: ExpoConfig = {
       {
         cameraPermission:
           "Allow Apna Tasks to access your camera so you can scan pairing QR codes.",
+        microphonePermission: false,
         barcodeScannerEnabled: true,
         // Camera capture stays audio-free; voice dictation gets RECORD_AUDIO
         // via the expo-speech-recognition config plugin below.
         recordAudioAndroid: false,
       },
     ],
+    ["expo-image-picker", { photosPermission: false, microphonePermission: false }],
     [
       "expo-speech-recognition",
       {
