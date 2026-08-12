@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
-# apna — daily-driver helper for the Apna Tasks desktop app.
+# apna — daily-driver helper for the Apna Tasks app.
+#
+#   apna dev up       start the local web dev stack (detached), open a browser tab
+#   apna dev down     stop it
+#   apna dev restart  stop + start (after server-side changes; web edits hot-reload)
+#   apna dev status   is it running? which ports/URL?
+#   apna dev logs     tail the dev log
+#   apna dev pair     mint a fresh one-time pairing URL if the browser lost auth
 #
 #   apna app update   rebuild the DMG from the working tree and reinstall into /Applications
 #   apna app run      launch the installed app (builds + installs first if missing)
@@ -7,8 +14,9 @@
 #   apna app build    build the DMG only, no install
 #   apna app install  install the last built DMG without rebuilding
 #
-# Installed builds are unsigned local builds (Tier 1): "update" is
-# rebuild-and-reinstall by design; there is no auto-updater.
+# Dev state lives in the repo-local .apnatasks directory (gitignored), never
+# the shared ~/.apnatasks home. Installed builds are unsigned local builds
+# (Tier 1): "update" is rebuild-and-reinstall by design; no auto-updater.
 set -euo pipefail
 
 SCRIPT_PATH="${BASH_SOURCE[0]}"
@@ -110,11 +118,164 @@ launch() {
   open "$dest"
 }
 
+# ---------------------------------------------------------------------------
+# dev: detached local web dev stack with repo-local isolated state
+# ---------------------------------------------------------------------------
+
+DEV_STATE_DIR="$REPO_ROOT/.apnatasks"
+DEV_LOG_FILE="$DEV_STATE_DIR/dev.log"
+DEV_PID_FILE="$DEV_STATE_DIR/dev.pid"
+
+# A live pid alone is not proof: after a crash or reboot the OS can hand the
+# recorded pid to an unrelated process (even a shell), and killing that group
+# closes the user's terminal. Only trust a pid whose command is our dev runner.
+dev_running_pid() {
+  [ -f "$DEV_PID_FILE" ] || return 1
+  local pid command
+  pid="$(cat "$DEV_PID_FILE")"
+  [ -n "$pid" ] || return 1
+  command="$(ps -o command= -p "$pid" 2>/dev/null)" || return 1
+  case "$command" in
+    *dev-runner.ts*) printf '%s' "$pid" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Ports can shift when occupied, so always read them from the latest
+# "[dev-runner] mode=... serverPort=... webPort=..." line in the log.
+dev_runner_field() {
+  grep -F '[dev-runner] mode=' "$DEV_LOG_FILE" 2>/dev/null | tail -1 |
+    sed -n "s/.*$1=\([^ ]*\).*/\1/p"
+}
+
+dev_web_url() {
+  local port
+  port="$(dev_runner_field webPort)"
+  [ -n "$port" ] && printf 'http://localhost:%s' "$port"
+}
+
+dev_up() {
+  local pid url
+  if pid="$(dev_running_pid)"; then
+    echo "Already running (pid $pid) — $(dev_web_url)"
+    return 0
+  fi
+  mkdir -p "$DEV_STATE_DIR"
+  : > "$DEV_LOG_FILE"
+  (
+    cd "$REPO_ROOT"
+    # Job control gives the background job its own process group, so a later
+    # group-kill can only ever reach the dev runner and its children.
+    set -m
+    nohup node scripts/dev-runner.ts dev \
+      --home-dir "$DEV_STATE_DIR" --browser >> "$DEV_LOG_FILE" 2>&1 &
+    echo "$!" > "$DEV_PID_FILE"
+  )
+
+  echo "==> Starting dev stack (log: $DEV_LOG_FILE)"
+  for _ in $(seq 1 60); do
+    url="$(dev_web_url || true)"
+    if [ -n "$url" ]; then
+      echo "==> Up: $url  (server port $(dev_runner_field serverPort), pid $(cat "$DEV_PID_FILE"))"
+      echo "    A browser tab should open on its own; if it asks to pair, run: apna dev pair"
+      return 0
+    fi
+    if ! dev_running_pid >/dev/null; then
+      echo "error: dev runner exited during startup — last log lines:" >&2
+      tail -20 "$DEV_LOG_FILE" >&2
+      exit 1
+    fi
+    sleep 1
+  done
+  echo "error: timed out waiting for dev-runner to report ports; check: apna dev logs" >&2
+  exit 1
+}
+
+dev_down() {
+  local pid pgid
+  if ! pid="$(dev_running_pid)"; then
+    echo "Not running."
+    rm -f "$DEV_PID_FILE"
+    return 0
+  fi
+  # Kill the whole process group so vite + server children go down together —
+  # but only when the runner leads its own group (dev_up guarantees this via
+  # set -m). A pid inside someone else's group gets a plain single-pid kill;
+  # group-killing it could take the user's shell down with it.
+  pgid="$(ps -o pgid= -p "$pid" | tr -d ' ')"
+  if [ -n "$pgid" ] && [ "$pgid" = "$pid" ]; then
+    kill -TERM -- "-$pgid" 2>/dev/null || true
+  else
+    pgid=""
+    kill -TERM "$pid" 2>/dev/null || true
+  fi
+  for _ in $(seq 1 10); do
+    dev_running_pid >/dev/null || break
+    sleep 1
+  done
+  if dev_running_pid >/dev/null; then
+    if [ -n "$pgid" ]; then
+      kill -KILL -- "-$pgid" 2>/dev/null || true
+    else
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+  fi
+  rm -f "$DEV_PID_FILE"
+  echo "==> Stopped."
+}
+
+dev_status() {
+  local pid url
+  if pid="$(dev_running_pid)"; then
+    url="$(dev_web_url || true)"
+    echo "Running (pid $pid) — $url  (server port $(dev_runner_field serverPort))"
+    if [ -n "$url" ] && command -v curl >/dev/null; then
+      curl -sf -o /dev/null --max-time 2 "$url" && echo "Web UI reachable." ||
+        echo "Warning: web UI not answering yet."
+    fi
+  else
+    echo "Not running."
+  fi
+}
+
+dev_logs() {
+  [ -f "$DEV_LOG_FILE" ] || { echo "error: no log at $DEV_LOG_FILE" >&2; exit 1; }
+  tail -n 50 -f "$DEV_LOG_FILE"
+}
+
+dev_pair() {
+  local server_port url
+  dev_running_pid >/dev/null || { echo "error: not running — start with: apna dev up" >&2; exit 1; }
+  server_port="$(dev_runner_field serverPort || true)"
+  url="$(dev_web_url || true)"
+  if [ -z "$server_port" ] || [ -z "$url" ]; then
+    echo "error: could not read ports from $DEV_LOG_FILE" >&2
+    exit 1
+  fi
+  (cd "$REPO_ROOT" && T3CODE_PORT="$server_port" node apps/server/src/bin.ts auth pairing create \
+    --base-dir "$DEV_STATE_DIR" \
+    --dev-url "$url" \
+    --base-url "$url" \
+    --ttl 15m \
+    --label apna-cli)
+}
+
 usage() {
-  sed -n '2,11p' "$SCRIPT_PATH" | sed 's/^# \{0,1\}//'
+  sed -n '2,19p' "$SCRIPT_PATH" | sed 's/^# \{0,1\}//'
 }
 
 case "${1:-help}" in
+  dev)
+    case "${2:-}" in
+      up) dev_up ;;
+      down) dev_down ;;
+      restart) dev_down; dev_up ;;
+      status) dev_status ;;
+      logs) dev_logs ;;
+      pair) dev_pair ;;
+      *) usage; exit 1 ;;
+    esac
+    ;;
   app)
     case "${2:-}" in
       update) build; install_app; launch ;;

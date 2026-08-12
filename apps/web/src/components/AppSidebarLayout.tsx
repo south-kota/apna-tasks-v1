@@ -1,6 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
+  lazy,
+  Suspense,
   useEffect,
   useState,
   useSyncExternalStore,
@@ -15,8 +17,11 @@ import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings"
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { useEnvironmentIdentificationMode, useSidebarV2Enabled } from "../hooks/useSettings";
+import { useSidebarViewMode } from "../state/sidebarViewMode";
 import ThreadSidebar from "./Sidebar";
 import ThreadSidebarV2 from "./SidebarV2";
+
+const VaultFilesSidebar = lazy(() => import("./sidebar/VaultFilesSidebar"));
 import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
 import {
   resolveInitialThreadSidebarWidth,
@@ -125,6 +130,10 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const isOnSettings = pathname === "/settings" || pathname.startsWith("/settings/");
   const useSidebarV2 = sidebarV2Enabled && !isOnSettings;
   const useSidebarV2Theme = useSidebarV2 || isOnSettings;
+  // The settings nav lives in the thread sidebars, so the vault view yields
+  // to them on settings routes just like v2 yields to v1 there.
+  const sidebarViewMode = useSidebarViewMode();
+  const useVaultSidebar = sidebarViewMode === "vault" && !isOnSettings;
   const isMacosDesktop = isElectron && isMacPlatform(navigator.platform);
   const [sidebarWidth, setSidebarWidth] = useState(readInitialThreadSidebarWidth);
   // Subscribed rather than read once: the clamp must track live window size,
@@ -200,7 +209,15 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           onResize: setSidebarWidth,
         }}
       >
-        {useSidebarV2 ? <ThreadSidebarV2 /> : <ThreadSidebar />}
+        {useVaultSidebar ? (
+          <Suspense fallback={null}>
+            <VaultFilesSidebar />
+          </Suspense>
+        ) : useSidebarV2 ? (
+          <ThreadSidebarV2 />
+        ) : (
+          <ThreadSidebar />
+        )}
         <SidebarRail />
       </Sidebar>
       {children}
